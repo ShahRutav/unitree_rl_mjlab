@@ -122,6 +122,11 @@ REGISTER_OBSERVATION(velocity_commands)
     return obs;
 }
 
+REGISTER_OBSERVATION(episode_length)
+{
+    return { static_cast<float>(env->episode_length) };
+}
+
 REGISTER_OBSERVATION(gait_phase)
 {
     float period = params["period"].as<float>();

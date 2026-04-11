@@ -4,11 +4,30 @@ outputs
 logs
 wandb
 MUJOCO_LOG.TXT
+
+# C++ build directories
 deploy/robots/go2/build
 deploy/robots/g1/build
+deploy/robots/g1_beyond/build
 deploy/robots/h1_2/build
 deploy/robots/g1_23dof/build
 deploy/robots/r1/build
 deploy/robots/a2/build
-src/assets/motions/g1/dance1_subject2.npz
 simulate/build
+
+# C++ build artifacts
+*.o
+*.a
+*.so
+*.so.*
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+src/assets/motions/g1/dance1_subject2.npz
+*__pycache__*

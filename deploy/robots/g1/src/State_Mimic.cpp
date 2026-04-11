@@ -137,6 +137,27 @@ State_Mimic::State_Mimic(int state_mode, std::string state_string)
 
 void State_Mimic::enter()
 {
+    // Debug: print joint angles inherited from velocity mode so we can compare
+    // against the init pose assumed by gen_arm_trajectory.py (HOME keyframe).
+    {
+        static const char* joint_names[29] = {
+            "left_hip_pitch",      "left_hip_roll",       "left_hip_yaw",
+            "left_knee",           "left_ankle_pitch",    "left_ankle_roll",
+            "right_hip_pitch",     "right_hip_roll",      "right_hip_yaw",
+            "right_knee",          "right_ankle_pitch",   "right_ankle_roll",
+            "waist_yaw",           "waist_roll",          "waist_pitch",
+            "left_shoulder_pitch", "left_shoulder_roll",  "left_shoulder_yaw",
+            "left_elbow",          "left_wrist_roll",     "left_wrist_pitch",    "left_wrist_yaw",
+            "right_shoulder_pitch","right_shoulder_roll", "right_shoulder_yaw",
+            "right_elbow",         "right_wrist_roll",    "right_wrist_pitch",   "right_wrist_yaw",
+        };
+        auto& motors = FSMState::lowstate->msg_.motor_state();
+        spdlog::info("[Mimic enter] Current joint angles (from velocity mode):");
+        for (int i = 0; i < 29; i++) {
+            spdlog::info("  [{:2d}] {:<25s} = {:+.4f}", i, joint_names[i], motors[i].q());
+        }
+    }
+
     // set gain
     for (int i = 0; i < env->robot->data.joint_stiffness.size(); i++)
     {

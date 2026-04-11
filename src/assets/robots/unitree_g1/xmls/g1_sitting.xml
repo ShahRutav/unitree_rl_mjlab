@@ -1,5 +1,21 @@
-<mujoco model="g1_29dof_rev_1_0">
+<mujoco model="g1_29dof_sitting">
+  <!--
+    G1 robot in a fixed sitting pose.
+    Changes from g1.xml:
+      - freejoint removed → pelvis is welded to world at pos="0 0 0.79"
+      - equality constraints lock all 12 leg joints at sitting angles:
+          hip_pitch = -π/2  (thigh horizontal, pointing forward)
+          knee      = +π/2  (shin vertical, pointing down)
+          roll/yaw/ankle = 0
+      - floor plane added to worldbody
+      - chair cylinder added (height = shin length ≈ 0.30 m,
+          placed at x = -upper_leg_length ≈ -0.194 m behind pelvis)
+    Arm/waist joints are unconstrained and can be moved freely.
+  -->
+
   <compiler angle="radian" meshdir="assets" autolimits="true"/>
+
+  <option gravity="0 0 -9.81"/>
 
   <default>
     <default class="g1">
@@ -58,11 +74,31 @@
   </asset>
 
   <worldbody>
-    <body name="pelvis" pos="0 0 0.79" childclass="g1">
+    <!-- Floor -->
+    <geom name="floor" type="plane" size="5 5 0.1" pos="0 0 0" rgba="0.8 0.75 0.6 1" condim="3"/>
+
+    <!--
+      Chair cylinder.
+      Dimensions:
+        height = shin length = 0.30 m  →  half-height = 0.15 m
+        radius = 0.15 m
+      Position:
+        x = -(upper_leg_length) = -0.194 m  (behind the pelvis)
+        y = 0 (centred between the two legs)
+        z = 0.15 m  (bottom at floor, top at 0.30 m = knee height)
+    -->
+    <geom name="chair" type="cylinder" size="0.15 0.175" pos="-0.0065 0 0.175"
+          rgba="0.55 0.35 0.15 1" condim="3"/>
+
+    <!--
+      Pelvis: freejoint removed → body is rigidly attached to world
+      at the default standing height pos="0 0 0.79".
+    -->
+    <body name="pelvis" pos="0 0 0.49" childclass="g1">
       <light pos="0 0 2" mode="trackcom"/>
       <camera name="tracking" pos="1.734 -1.135 .35" xyaxes="0.552 0.834 -0.000 -0.170 0.112 0.979" mode="trackcom"/>
       <inertial pos="0 0 -0.07605" quat="1 0 -0.000399148 0" mass="3.813" diaginertia="0.010549 0.0093089 0.0079184"/>
-      <freejoint name="floating_base_joint"/>
+      <!-- NOTE: no freejoint here — pelvis is welded to world -->
       <geom class="visual" material="black" mesh="pelvis"/>
       <geom class="visual" mesh="pelvis_contour_link"/>
       <geom name="pelvis_collision" class="collision" type="sphere" size="0.07" pos="0 0 -0.08"/>
@@ -167,8 +203,8 @@
             <geom class="visual" pos="0.0039635 0 -0.044" material="black" mesh="head_link"/>
             <geom name="torso_collision" class="collision" size="0.09" fromto="0.01 0 0.08 0.01 0 0.2"/>
             <geom name="head_collision" class="collision" type="sphere" size="0.06" pos="0 0 .43"/>
-            <camera name="head_camera" pos="0.0576235 0.01753 0.41987" xyaxes="0 -1 0 0.7374 0 0.6754"/>
             <site name="imu_in_torso" size="0.01" pos="-0.03959 -0.00224 0.14792"/>
+            <camera name="head_camera" pos="0.0576235 0.01753 0.41987" xyaxes="0 -1 0 0.7374 0 0.6754"/>
             <body name="left_shoulder_pitch_link" pos="0.0039563 0.10022 0.24778" quat="0.990264 0.139201 1.38722e-05 -9.86868e-05">
               <inertial pos="0 0.035892 -0.011628" quat="0.654152 0.0130458 -0.326267 0.68225" mass="0.718" diaginertia="0.000465864 0.000432842 0.000406394"/>
               <joint name="left_shoulder_pitch_joint" axis="0 1 0" range="-3.0892 2.6704"/>
@@ -256,12 +292,50 @@
       </body>
     </body>
   </worldbody>
+
+  <!--
+    Sitting keyframe: 29 joint values (no freejoint).
+    Order: left_leg(6) right_leg(6) waist(3) left_arm(7) right_arm(7)
+    hip_pitch=-π/2, knee=+π/2, everything else 0.
+  -->
+  <keyframe>
+    <key name="sitting"
+         qpos="-1.5708 0 0 1.5708 0 0
+               -1.5708 0 0 1.5708 0 0
+                0 0 0
+                0 0 0 0 0 0 0
+                0 0 0 0 0 0 0"/>
+  </keyframe>
+
   <contact>
     <exclude body1="left_elbow_link" body2="left_wrist_pitch_link"/>
     <exclude body1="right_elbow_link" body2="right_wrist_pitch_link"/>
     <exclude body1="pelvis" body2="right_hip_roll_link"/>
     <exclude body1="pelvis" body2="left_hip_roll_link"/>
   </contact>
+
+  <equality>
+    <!--
+      Lock all 12 leg joints at sitting pose:
+        hip_pitch = -π/2 ≈ -1.5708  (thigh horizontal, pointing forward in +x)
+        knee      = +π/2 ≈ +1.5708  (shin vertical, pointing down)
+        hip_roll, hip_yaw, ankle_pitch, ankle_roll = 0
+    -->
+    <joint joint1="left_hip_pitch_joint"  polycoef="-1.5708 0 0 0 0"/>
+    <joint joint1="left_hip_roll_joint"   polycoef="0 0 0 0 0"/>
+    <joint joint1="left_hip_yaw_joint"    polycoef="0 0 0 0 0"/>
+    <joint joint1="left_knee_joint"       polycoef="1.5708 0 0 0 0"/>
+    <joint joint1="left_ankle_pitch_joint" polycoef="0 0 0 0 0"/>
+    <joint joint1="left_ankle_roll_joint"  polycoef="0 0 0 0 0"/>
+
+    <joint joint1="right_hip_pitch_joint" polycoef="-1.5708 0 0 0 0"/>
+    <joint joint1="right_hip_roll_joint"  polycoef="0 0 0 0 0"/>
+    <joint joint1="right_hip_yaw_joint"   polycoef="0 0 0 0 0"/>
+    <joint joint1="right_knee_joint"      polycoef="1.5708 0 0 0 0"/>
+    <joint joint1="right_ankle_pitch_joint" polycoef="0 0 0 0 0"/>
+    <joint joint1="right_ankle_roll_joint"  polycoef="0 0 0 0 0"/>
+  </equality>
+
   <sensor>
     <gyro name="imu_ang_vel" site="imu_in_pelvis"/>
     <velocimeter name="imu_lin_vel" site="imu_in_pelvis"/>

@@ -35,6 +35,7 @@ link_libraries(
   pthread
   mujoco
   glfw
+  X11
   yaml-cpp
   unitree_sdk2
   boost_program_options

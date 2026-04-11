@@ -3,6 +3,7 @@
 #include <iostream>
 #include <unitree/dds_wrapper/common/unitree_joystick.hpp>
 #include "joystick/joystick.h"
+#include "keyboard_state.h"
 #include <memory>
 
 
@@ -14,14 +15,14 @@ public:
 	{
 		js_ = std::make_unique<Joystick>(device);
 		if(!js_->isFound()) {
-			std::cout << "Error: Joystick open failed." << std::endl;
-			exit(1);
+			std::cout << "Warning: XBox joystick not found at " << device << ". Continuing without joystick." << std::endl;
 		}
         max_value_ = 1 << (bits - 1);
 	}
 
     void update() override
     {
+        if(!js_->isFound()) return;
         js_->getState();
         back(js_->button_[6]);
         start(js_->button_[7]);
@@ -56,14 +57,14 @@ public:
 	{
 		js_ = std::make_unique<Joystick>(device);
 		if(!js_->isFound()) {
-			std::cout << "Error: Joystick open failed." << std::endl;
-			exit(1);
+			std::cout << "Warning: Switch joystick not found at " << device << ". Continuing without joystick." << std::endl;
 		}
         max_value_ = 1 << (bits - 1);
 	}
 
     void update() override
     {
+        if(!js_->isFound()) return;
         js_->getState();
         back(js_->button_[10]);
         start(js_->button_[11]);
@@ -87,4 +88,47 @@ public:
 private:
 	std::unique_ptr<Joystick> js_;
 	int max_value_;
+};
+
+
+// Keyboard mapping:
+//   W/S        → ly +/-   (walk forward/back)
+//   A/D        → lx -/+   (strafe left/right)
+//   Q/E        → rx -/+   (turn left/right)
+//   Arrow keys → D-pad up/down/left/right
+//   Left Ctrl  → LT
+//   Right Ctrl → RT
+//   Left Shift → LB
+//   Right Shift→ RB
+//   J          → A
+//   K          → B
+//   U          → X
+//   I          → Y
+class KeyboardJoystick : public unitree::common::UnitreeJoystick
+{
+public:
+    KeyboardJoystick() : unitree::common::UnitreeJoystick() {}
+
+    void update() override
+    {
+        using namespace keyboard;
+        A(key_state[GLFW_KEY_J]);
+        B(key_state[GLFW_KEY_K]);
+        X(key_state[GLFW_KEY_U]);
+        Y(key_state[GLFW_KEY_I]);
+        LB(key_state[GLFW_KEY_LEFT_SHIFT]);
+        RB(key_state[GLFW_KEY_RIGHT_SHIFT]);
+        LT(key_state[GLFW_KEY_LEFT_CONTROL]);
+        RT(key_state[GLFW_KEY_RIGHT_CONTROL]);
+        back(key_state[GLFW_KEY_TAB]);
+        start(key_state[GLFW_KEY_ENTER]);
+        up(key_state[GLFW_KEY_UP]);
+        down(key_state[GLFW_KEY_DOWN]);
+        left(key_state[GLFW_KEY_LEFT]);
+        right(key_state[GLFW_KEY_RIGHT]);
+        lx((key_state[GLFW_KEY_D] ? 1.0 : 0.0) - (key_state[GLFW_KEY_A] ? 1.0 : 0.0));
+        ly((key_state[GLFW_KEY_W] ? 1.0 : 0.0) - (key_state[GLFW_KEY_S] ? 1.0 : 0.0));
+        rx((key_state[GLFW_KEY_E] ? 1.0 : 0.0) - (key_state[GLFW_KEY_Q] ? 1.0 : 0.0));
+        ry(0.0);
+    }
 };

@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Required for multi-threaded X11 usage (prevents XCB threading assertion crash).
+// Forward-declared to avoid X11/Xlib.h polluting the namespace with macros (e.g. Success)
+// that conflict with Eigen headers included transitively via unitree_sdk2.
+extern "C" int XInitThreads(void);
+
 // !!! hack code: make glfw_adapter.window_ public
 #define private public
 #include "glfw_adapter.h"
@@ -33,6 +38,7 @@
 #include "simulate.h"
 #include "array_safety.h"
 #include "unitree_sdk2_bridge.h"
+#include "keyboard_state.h"
 #include "param.h"
 
 #define MUJOCO_PLUGIN_DIR "mujoco_plugin"
@@ -620,6 +626,12 @@ __attribute__((used, visibility("default"))) extern "C" void _mj_rosettaError(co
 
 // user keyboard callback
 void user_key_cb(GLFWwindow* window, int key, int scancode, int act, int mods) {
+  // Update shared key state for KeyboardJoystick
+  if (key >= 0 && key <= GLFW_KEY_LAST) {
+    if (act == GLFW_PRESS)        keyboard::key_state[key] = true;
+    else if (act == GLFW_RELEASE) keyboard::key_state[key] = false;
+  }
+
   if (act==GLFW_PRESS)
   {
     if(param::config.enable_elastic_band == 1) {
@@ -641,6 +653,7 @@ void user_key_cb(GLFWwindow* window, int key, int scancode, int act, int mods) {
 // run event loop
 int main(int argc, char **argv)
 {
+  XInitThreads();
 
   // display an error if running on macOS under Rosetta 2
 #if defined(__APPLE__) && defined(__AVX__)

@@ -44,6 +44,32 @@ public:
             }
         }
 
+        // keyboard_transitions: single-key mappings read from stdin terminal
+        auto keyboard_transitions = param::config["FSM"][state_string]["keyboard_transitions"];
+        if(keyboard_transitions)
+        {
+            auto kt_map = keyboard_transitions.as<std::map<std::string, std::string>>();
+            for(auto it = kt_map.begin(); it != kt_map.end(); ++it)
+            {
+                std::string target_fsm = it->first;
+                std::string key = it->second;
+                if(!FSMStringMap.right.count(target_fsm))
+                {
+                    spdlog::warn("FSM keyboard_transition: State_'{}' not found!", target_fsm);
+                    continue;
+                }
+                int fsm_id = FSMStringMap.right.at(target_fsm);
+                registered_checks.emplace_back(
+                    std::make_pair(
+                        [key]()->bool{
+                            return keyboard && keyboard->on_pressed && keyboard->key() == key;
+                        },
+                        fsm_id
+                    )
+                );
+            }
+        }
+
         // register for all states
         registered_checks.emplace_back(
             std::make_pair(
