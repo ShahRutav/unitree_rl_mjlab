@@ -130,6 +130,7 @@ def solve_with_viewer(solver: IKSolver, targets: list[TargetFrame]) -> IKResult:
             dv = np.zeros(solver.model.nv)
             dv[solver.dof_ids] = dq
             mujoco.mj_integratePos(solver.model, solver.data.qpos, dv, 1.0)
+            solver._clamp_to_limits()
             mujoco.mj_forward(solver.model, solver.data)
 
         if not converged:
@@ -224,9 +225,18 @@ def main() -> None:
 
     # --list-* queries
     if args.list_joints:
-        print("Joints in model:")
+        eff = solver.get_effective_limits()
+        print(f"{'Joint':<42} {'Active':>6}  {'Lo (rad)':>10}  {'Hi (rad)':>10}")
+        print("-" * 72)
         for name in solver.joint_names():
-            print(f"  {name}")
+            active = name in cfg.active_joints
+            if active:
+                lo, hi = eff[name]
+                lo_s = f"{lo:+.4f}" if np.isfinite(lo) else "      -inf"
+                hi_s = f"{hi:+.4f}" if np.isfinite(hi) else "      +inf"
+            else:
+                lo_s = hi_s = "         -"
+            print(f"  {name:<40} {'yes' if active else 'no':>6}  {lo_s:>10}  {hi_s:>10}")
         return
     if args.list_bodies:
         print("Bodies in model:")

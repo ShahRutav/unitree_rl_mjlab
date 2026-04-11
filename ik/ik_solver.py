@@ -97,6 +97,10 @@ class IKConfig:
     max_dq: float = 0.5
     freeze_legs: bool = False
     frozen_leg_joints: dict[str, float] = field(default_factory=dict)
+    # Per-joint limits for active joints: {joint_name: (lo_rad, hi_rad)}.
+    # If a joint is absent, the model's jnt_range is used (if limited), else ±inf.
+    # Either bound may be None to fall back to the model limit for that side.
+    joint_limits: dict[str, tuple] = field(default_factory=dict)
 
     # ── default frozen-leg angles (standing pose with locked knees) ──────────
     _DEFAULT_FROZEN_LEGS: dict[str, float] = field(default_factory=lambda: {
@@ -148,6 +152,16 @@ class IKConfig:
         # Active joints
         active_joints = list(cfg.get("joints", {}).get("active", []))
 
+        # Per-joint limits (optional): {name: [lo, hi]} — either bound may be null
+        raw_limits = cfg.get("joints", {}).get("limits", {}) or {}
+        joint_limits: dict[str, tuple] = {}
+        for jname, bounds in raw_limits.items():
+            if bounds is None or len(bounds) != 2:
+                raise ValueError(
+                    f"joints.limits.{jname}: expected [lo, hi] (use null for 'no override')"
+                )
+            joint_limits[str(jname)] = (bounds[0], bounds[1])  # each may be None
+
         # Initial pose
         init_cfg = cfg.get("initial_pose", {})
         base_pos  = np.array(init_cfg.get("base_pos",  [0.0, 0.0, 0.8]), dtype=float)
@@ -170,6 +184,7 @@ class IKConfig:
             max_dq=float(solver_cfg.get("max_dq", 0.5)),
             freeze_legs=freeze_legs,
             frozen_leg_joints=frozen_leg_joints,
+            joint_limits=joint_limits,
         )
 
 
@@ -306,12 +321,22 @@ class IKSolver:
         # Pre-resolve body IDs for the targets defined in config
         self._config_body_ids = self._resolve_body_ids(config.targets)
 
-        # Pre-resolve DOF ids for active joints
+        # Pre-resolve DOF ids and qpos addresses for active joints
         self.dof_ids = self._resolve_dof_ids(config.active_joints)
+        self._active_qpos_adrs = self._resolve_qpos_adrs(config.active_joints)
+
+        # Build effective limits for active joints: shape (n_active, 2).
+        # Priority: config limit > model jnt_range > ±inf.
+        self._limits = self._build_limits(config.active_joints, config.joint_limits)
 
         if verbose:
             print(f"[IKSolver] active joints ({len(config.active_joints)}): "
                   f"{config.active_joints}")
+            for name, (lo, hi) in zip(config.active_joints,
+                                      self._limits.tolist()):
+                lo_s = f"{lo:+.4f}" if np.isfinite(lo) else "   -inf"
+                hi_s = f"{hi:+.4f}" if np.isfinite(hi) else "   +inf"
+                print(f"  {name:40s}  [{lo_s}, {hi_s}]")
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
@@ -332,6 +357,50 @@ class IKSolver:
                 raise ValueError(f"Joint '{name}' not found in model.")
             ids.append(self.model.jnt_dofadr[jid])
         return np.array(ids, dtype=int)
+
+    def _resolve_qpos_adrs(self, joint_names: list[str]) -> np.ndarray:
+        """qpos address for each named joint (used for limit clamping)."""
+        return np.array([
+            self.model.jnt_qposadr[
+                mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, n)
+            ]
+            for n in joint_names
+        ], dtype=int)
+
+    def _build_limits(self, joint_names: list[str],
+                      config_limits: dict[str, tuple]) -> np.ndarray:
+        """
+        Build an (n_active, 2) array of [lo, hi] for each active joint.
+
+        Resolution order for each bound:
+          1. Config limit (joints.limits in YAML) — highest priority.
+             Either bound may be None to fall back to the model value.
+          2. Model jnt_range (when jnt_limited[jid] == 1).
+          3. ±inf  (unconstrained).
+        """
+        _inf = float("inf")
+        rows = []
+        for name in joint_names:
+            jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            # Model limits
+            if self.model.jnt_limited[jid]:
+                m_lo, m_hi = float(self.model.jnt_range[jid, 0]), float(self.model.jnt_range[jid, 1])
+            else:
+                m_lo, m_hi = -_inf, _inf
+            # Config overrides
+            if name in config_limits:
+                c_lo, c_hi = config_limits[name]
+                lo = float(c_lo) if c_lo is not None else m_lo
+                hi = float(c_hi) if c_hi is not None else m_hi
+            else:
+                lo, hi = m_lo, m_hi
+            rows.append([lo, hi])
+        return np.array(rows, dtype=float)  # (n_active, 2)
+
+    def _clamp_to_limits(self) -> None:
+        """Clamp each active joint's qpos to its effective [lo, hi] limits."""
+        for qadr, (lo, hi) in zip(self._active_qpos_adrs, self._limits):
+            self.data.qpos[qadr] = np.clip(self.data.qpos[qadr], lo, hi)
 
     def _set_initial_pose(self) -> None:
         """Reset data.qpos to the configured initial pose."""
@@ -437,6 +506,7 @@ class IKSolver:
             dv = np.zeros(self.model.nv)
             dv[self.dof_ids] = dq
             mujoco.mj_integratePos(self.model, self.data.qpos, dv, 1.0)
+            self._clamp_to_limits()
             mujoco.mj_forward(self.model, self.data)
 
         if not converged and self.verbose:
@@ -495,7 +565,7 @@ class IKSolver:
 
         return results
 
-    # ── convenience: all joint names in the model ─────────────────────────────
+    # ── convenience helpers ───────────────────────────────────────────────────
 
     def joint_names(self) -> list[str]:
         return [
@@ -508,3 +578,14 @@ class IKSolver:
             mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, i)
             for i in range(self.model.nbody)
         ]
+
+    def get_effective_limits(self) -> dict[str, tuple[float, float]]:
+        """Return the effective [lo, hi] limits for every active joint.
+
+        These are the limits actually enforced during the solve (after merging
+        config overrides with model jnt_range).
+        """
+        return {
+            name: (float(self._limits[i, 0]), float(self._limits[i, 1]))
+            for i, name in enumerate(self.cfg.active_joints)
+        }
