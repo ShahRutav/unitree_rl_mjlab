@@ -18,6 +18,7 @@
   <option gravity="0 0 -9.81"/>
 
   <default>
+    <joint damping="0.05" armature="0.01" frictionloss="0.2"/>
     <default class="g1">
       <default class="visual">
         <geom type="mesh" density="0" material="silver" contype="0" conaffinity="0" group="2"/>
@@ -337,9 +338,140 @@
   </equality>
 
   <sensor>
-    <gyro name="imu_ang_vel" site="imu_in_pelvis"/>
-    <velocimeter name="imu_lin_vel" site="imu_in_pelvis"/>
-    <accelerometer name="imu_lin_acc" site="imu_in_pelvis"/>
-    <subtreeangmom name="root_angmom" body="pelvis"/>
+    <!-- Motor position sensors (sensordata[0..28]) — must be first, in actuator order -->
+    <jointpos name="left_hip_pitch_pos"       joint="left_hip_pitch_joint" />
+    <jointpos name="left_hip_roll_pos"        joint="left_hip_roll_joint" />
+    <jointpos name="left_hip_yaw_pos"         joint="left_hip_yaw_joint" />
+    <jointpos name="left_knee_pos"            joint="left_knee_joint" />
+    <jointpos name="left_ankle_pitch_pos"     joint="left_ankle_pitch_joint" />
+    <jointpos name="left_ankle_roll_pos"      joint="left_ankle_roll_joint" />
+    <jointpos name="right_hip_pitch_pos"      joint="right_hip_pitch_joint" />
+    <jointpos name="right_hip_roll_pos"       joint="right_hip_roll_joint" />
+    <jointpos name="right_hip_yaw_pos"        joint="right_hip_yaw_joint" />
+    <jointpos name="right_knee_pos"           joint="right_knee_joint" />
+    <jointpos name="right_ankle_pitch_pos"    joint="right_ankle_pitch_joint" />
+    <jointpos name="right_ankle_roll_pos"     joint="right_ankle_roll_joint" />
+    <jointpos name="waist_yaw_pos"            joint="waist_yaw_joint" />
+    <jointpos name="waist_roll_pos"           joint="waist_roll_joint" />
+    <jointpos name="waist_pitch_pos"          joint="waist_pitch_joint" />
+    <jointpos name="left_shoulder_pitch_pos"  joint="left_shoulder_pitch_joint" />
+    <jointpos name="left_shoulder_roll_pos"   joint="left_shoulder_roll_joint" />
+    <jointpos name="left_shoulder_yaw_pos"    joint="left_shoulder_yaw_joint" />
+    <jointpos name="left_elbow_pos"           joint="left_elbow_joint" />
+    <jointpos name="left_wrist_roll_pos"      joint="left_wrist_roll_joint" />
+    <jointpos name="left_wrist_pitch_pos"     joint="left_wrist_pitch_joint" />
+    <jointpos name="left_wrist_yaw_pos"       joint="left_wrist_yaw_joint" />
+    <jointpos name="right_shoulder_pitch_pos" joint="right_shoulder_pitch_joint" />
+    <jointpos name="right_shoulder_roll_pos"  joint="right_shoulder_roll_joint" />
+    <jointpos name="right_shoulder_yaw_pos"   joint="right_shoulder_yaw_joint" />
+    <jointpos name="right_elbow_pos"          joint="right_elbow_joint" />
+    <jointpos name="right_wrist_roll_pos"     joint="right_wrist_roll_joint" />
+    <jointpos name="right_wrist_pitch_pos"    joint="right_wrist_pitch_joint" />
+    <jointpos name="right_wrist_yaw_pos"      joint="right_wrist_yaw_joint" />
+
+    <!-- Motor velocity sensors (sensordata[29..57]) -->
+    <jointvel name="left_hip_pitch_vel"       joint="left_hip_pitch_joint" />
+    <jointvel name="left_hip_roll_vel"        joint="left_hip_roll_joint" />
+    <jointvel name="left_hip_yaw_vel"         joint="left_hip_yaw_joint" />
+    <jointvel name="left_knee_vel"            joint="left_knee_joint" />
+    <jointvel name="left_ankle_pitch_vel"     joint="left_ankle_pitch_joint" />
+    <jointvel name="left_ankle_roll_vel"      joint="left_ankle_roll_joint" />
+    <jointvel name="right_hip_pitch_vel"      joint="right_hip_pitch_joint" />
+    <jointvel name="right_hip_roll_vel"       joint="right_hip_roll_joint" />
+    <jointvel name="right_hip_yaw_vel"        joint="right_hip_yaw_joint" />
+    <jointvel name="right_knee_vel"           joint="right_knee_joint" />
+    <jointvel name="right_ankle_pitch_vel"    joint="right_ankle_pitch_joint" />
+    <jointvel name="right_ankle_roll_vel"     joint="right_ankle_roll_joint" />
+    <jointvel name="waist_yaw_vel"            joint="waist_yaw_joint" />
+    <jointvel name="waist_roll_vel"           joint="waist_roll_joint" />
+    <jointvel name="waist_pitch_vel"          joint="waist_pitch_joint" />
+    <jointvel name="left_shoulder_pitch_vel"  joint="left_shoulder_pitch_joint" />
+    <jointvel name="left_shoulder_roll_vel"   joint="left_shoulder_roll_joint" />
+    <jointvel name="left_shoulder_yaw_vel"    joint="left_shoulder_yaw_joint" />
+    <jointvel name="left_elbow_vel"           joint="left_elbow_joint" />
+    <jointvel name="left_wrist_roll_vel"      joint="left_wrist_roll_joint" />
+    <jointvel name="left_wrist_pitch_vel"     joint="left_wrist_pitch_joint" />
+    <jointvel name="left_wrist_yaw_vel"       joint="left_wrist_yaw_joint" />
+    <jointvel name="right_shoulder_pitch_vel" joint="right_shoulder_pitch_joint" />
+    <jointvel name="right_shoulder_roll_vel"  joint="right_shoulder_roll_joint" />
+    <jointvel name="right_shoulder_yaw_vel"   joint="right_shoulder_yaw_joint" />
+    <jointvel name="right_elbow_vel"          joint="right_elbow_joint" />
+    <jointvel name="right_wrist_roll_vel"     joint="right_wrist_roll_joint" />
+    <jointvel name="right_wrist_pitch_vel"    joint="right_wrist_pitch_joint" />
+    <jointvel name="right_wrist_yaw_vel"      joint="right_wrist_yaw_joint" />
+
+    <!-- Motor torque sensors (sensordata[58..86]) -->
+    <jointactuatorfrc name="left_hip_pitch_torque"       joint="left_hip_pitch_joint" />
+    <jointactuatorfrc name="left_hip_roll_torque"        joint="left_hip_roll_joint" />
+    <jointactuatorfrc name="left_hip_yaw_torque"         joint="left_hip_yaw_joint" />
+    <jointactuatorfrc name="left_knee_torque"            joint="left_knee_joint" />
+    <jointactuatorfrc name="left_ankle_pitch_torque"     joint="left_ankle_pitch_joint" />
+    <jointactuatorfrc name="left_ankle_roll_torque"      joint="left_ankle_roll_joint" />
+    <jointactuatorfrc name="right_hip_pitch_torque"      joint="right_hip_pitch_joint" />
+    <jointactuatorfrc name="right_hip_roll_torque"       joint="right_hip_roll_joint" />
+    <jointactuatorfrc name="right_hip_yaw_torque"        joint="right_hip_yaw_joint" />
+    <jointactuatorfrc name="right_knee_torque"           joint="right_knee_joint" />
+    <jointactuatorfrc name="right_ankle_pitch_torque"    joint="right_ankle_pitch_joint" />
+    <jointactuatorfrc name="right_ankle_roll_torque"     joint="right_ankle_roll_joint" />
+    <jointactuatorfrc name="waist_yaw_torque"            joint="waist_yaw_joint" />
+    <jointactuatorfrc name="waist_roll_torque"           joint="waist_roll_joint" />
+    <jointactuatorfrc name="waist_pitch_torque"          joint="waist_pitch_joint" />
+    <jointactuatorfrc name="left_shoulder_pitch_torque"  joint="left_shoulder_pitch_joint" />
+    <jointactuatorfrc name="left_shoulder_roll_torque"   joint="left_shoulder_roll_joint" />
+    <jointactuatorfrc name="left_shoulder_yaw_torque"    joint="left_shoulder_yaw_joint" />
+    <jointactuatorfrc name="left_elbow_torque"           joint="left_elbow_joint" />
+    <jointactuatorfrc name="left_wrist_roll_torque"      joint="left_wrist_roll_joint" />
+    <jointactuatorfrc name="left_wrist_pitch_torque"     joint="left_wrist_pitch_joint" />
+    <jointactuatorfrc name="left_wrist_yaw_torque"       joint="left_wrist_yaw_joint" />
+    <jointactuatorfrc name="right_shoulder_pitch_torque" joint="right_shoulder_pitch_joint" />
+    <jointactuatorfrc name="right_shoulder_roll_torque"  joint="right_shoulder_roll_joint" />
+    <jointactuatorfrc name="right_shoulder_yaw_torque"   joint="right_shoulder_yaw_joint" />
+    <jointactuatorfrc name="right_elbow_torque"          joint="right_elbow_joint" />
+    <jointactuatorfrc name="right_wrist_roll_torque"     joint="right_wrist_roll_joint" />
+    <jointactuatorfrc name="right_wrist_pitch_torque"    joint="right_wrist_pitch_joint" />
+    <jointactuatorfrc name="right_wrist_yaw_torque"      joint="right_wrist_yaw_joint" />
+
+    <!-- IMU sensors — named so the bridge can find them by name -->
+    <framequat    name="imu_quat" objtype="site" objname="imu_in_pelvis" />
+    <gyro         name="imu_gyro" site="imu_in_pelvis" />
+    <accelerometer name="imu_acc" site="imu_in_pelvis" />
   </sensor>
+
+  <!--
+    29 position actuators — same joints and ctrlranges as scene_g1.xml.
+    The 12 leg actuators are present so m->nu = 29 (needed by G1Bridge),
+    but their commands are overridden by the equality constraints that
+    lock the legs in the sitting pose.
+  -->
+  <actuator>
+    <motor name="left_hip_pitch"       joint="left_hip_pitch_joint"       ctrlrange="-88 88" />
+    <motor name="left_hip_roll"        joint="left_hip_roll_joint"        ctrlrange="-139 139" />
+    <motor name="left_hip_yaw"         joint="left_hip_yaw_joint"         ctrlrange="-88 88" />
+    <motor name="left_knee"            joint="left_knee_joint"            ctrlrange="-139 139" />
+    <motor name="left_ankle_pitch"     joint="left_ankle_pitch_joint"     ctrlrange="-50 50" />
+    <motor name="left_ankle_roll"      joint="left_ankle_roll_joint"      ctrlrange="-50 50" />
+    <motor name="right_hip_pitch"      joint="right_hip_pitch_joint"      ctrlrange="-88 88" />
+    <motor name="right_hip_roll"       joint="right_hip_roll_joint"       ctrlrange="-139 139" />
+    <motor name="right_hip_yaw"        joint="right_hip_yaw_joint"        ctrlrange="-88 88" />
+    <motor name="right_knee"           joint="right_knee_joint"           ctrlrange="-139 139" />
+    <motor name="right_ankle_pitch"    joint="right_ankle_pitch_joint"    ctrlrange="-25 25" />
+    <motor name="right_ankle_roll"     joint="right_ankle_roll_joint"     ctrlrange="-25 25" />
+    <motor name="waist_yaw"            joint="waist_yaw_joint"            ctrlrange="-88 88" />
+    <motor name="waist_roll"           joint="waist_roll_joint"           ctrlrange="-25 25" />
+    <motor name="waist_pitch"          joint="waist_pitch_joint"          ctrlrange="-25 25" />
+    <motor name="left_shoulder_pitch"  joint="left_shoulder_pitch_joint"  ctrlrange="-25 25" />
+    <motor name="left_shoulder_roll"   joint="left_shoulder_roll_joint"   ctrlrange="-25 25" />
+    <motor name="left_shoulder_yaw"    joint="left_shoulder_yaw_joint"    ctrlrange="-25 25" />
+    <motor name="left_elbow"           joint="left_elbow_joint"           ctrlrange="-25 25" />
+    <motor name="left_wrist_roll"      joint="left_wrist_roll_joint"      ctrlrange="-25 25" />
+    <motor name="left_wrist_pitch"     joint="left_wrist_pitch_joint"     ctrlrange="-5 5" />
+    <motor name="left_wrist_yaw"       joint="left_wrist_yaw_joint"       ctrlrange="-5 5" />
+    <motor name="right_shoulder_pitch" joint="right_shoulder_pitch_joint" ctrlrange="-25 25" />
+    <motor name="right_shoulder_roll"  joint="right_shoulder_roll_joint"  ctrlrange="-25 25" />
+    <motor name="right_shoulder_yaw"   joint="right_shoulder_yaw_joint"   ctrlrange="-25 25" />
+    <motor name="right_elbow"          joint="right_elbow_joint"          ctrlrange="-25 25" />
+    <motor name="right_wrist_roll"     joint="right_wrist_roll_joint"     ctrlrange="-25 25" />
+    <motor name="right_wrist_pitch"    joint="right_wrist_pitch_joint"    ctrlrange="-5 5" />
+    <motor name="right_wrist_yaw"      joint="right_wrist_yaw_joint"      ctrlrange="-5 5" />
+  </actuator>
 </mujoco>
