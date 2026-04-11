@@ -1,0 +1,92 @@
+# IK config — G1 right arm (waist + right arm, 10 DOF)
+#
+# Solves for the right end-effector (right_wrist_yaw_link) using the
+# waist and right arm joints.  Legs are frozen in a standing pose.
+#
+# Usage:
+#   python ik/ik_runner.py ik/configs/g1_right_arm.yaml
+#   python ik/ik_runner.py ik/configs/g1_right_arm.yaml --viewer
+#   python ik/ik_runner.py ik/configs/g1_right_arm.yaml \
+#       --target right_eef 0.45 -0.25 0.90
+
+robot:
+  xml: src/assets/robots/unitree_g1/xmls/g1.xml
+
+  # Pin leg joints and weld pelvis to world so the robot stays upright.
+  # The free joint remains in the model; qpos indices are unchanged.
+  freeze_legs: true
+
+  # Optional override of the frozen leg joint angles (radians).
+  # Defaults below match a straight-standing pose (hip=-π/2, knee=+π/2).
+  # frozen_leg_joints:
+  #   left_hip_pitch_joint:  -1.5707963
+  #   left_hip_roll_joint:    0.0
+  #   left_hip_yaw_joint:     0.0
+  #   left_knee_joint:        1.5707963
+  #   right_hip_pitch_joint: -1.5707963
+  #   right_hip_roll_joint:   0.0
+  #   right_hip_yaw_joint:    0.0
+  #   right_knee_joint:       1.5707963
+
+# ── Target frames ─────────────────────────────────────────────────────────────
+# Each target names a body in the MuJoCo model and the desired world-frame pose.
+#   position    — [x, y, z] in metres
+#   orientation — [w, x, y, z] quaternion; omit to skip orientation control
+#   pos_weight  — weight on position error (default 1.0)
+#   ori_weight  — weight on orientation error (default 0.5)
+
+targets:
+  - name: right_eef
+    body: right_wrist_yaw_link
+    position: [0.4, -0.3, 0.8]
+    orientation: [1.0, 0.0, 0.0, 0.0]   # identity — no rotation constraint
+    pos_weight: 1.0
+    ori_weight: 0.5
+
+# ── Active joints ─────────────────────────────────────────────────────────────
+# Only these joints are updated by the IK solver; all others stay at their
+# initial values.
+
+joints:
+  active:
+    - waist_yaw_joint
+    - waist_roll_joint
+    - waist_pitch_joint
+    - right_shoulder_pitch_joint
+    - right_shoulder_roll_joint
+    - right_shoulder_yaw_joint
+    - right_elbow_joint
+    - right_wrist_roll_joint
+    - right_wrist_pitch_joint
+    - right_wrist_yaw_joint
+
+# ── Initial robot pose ────────────────────────────────────────────────────────
+# base_pos  — free-joint xyz position (metres)
+# base_quat — free-joint orientation, wxyz
+# joints    — named joint angles (radians); unset joints default to 0
+
+initial_pose:
+  base_pos:  [0.0, 0.0, 0.8]
+  base_quat: [1.0, 0.0, 0.0, 0.0]
+  joints:
+    # Legs (standing home pose)
+    left_hip_pitch_joint:   -0.1
+    right_hip_pitch_joint:  -0.1
+    left_knee_joint:         0.3
+    right_knee_joint:        0.3
+    left_ankle_pitch_joint: -0.2
+    right_ankle_pitch_joint: -0.2
+    # Arms (natural resting pose)
+    left_shoulder_pitch_joint:  0.35
+    right_shoulder_pitch_joint: 0.35
+    left_shoulder_roll_joint:   0.18
+    right_shoulder_roll_joint: -0.18
+    left_elbow_joint:   0.87
+    right_elbow_joint:  0.87
+
+# ── Solver hyperparameters ───────────────────────────────────────────────────
+solver:
+  max_iter:  200
+  tolerance: 1.0e-3   # converge when max position error < this (metres)
+  damping:   0.05     # DLS damping factor (λ); higher = smoother, less agile
+  max_dq:    0.5      # per-step joint delta clamp (rad)

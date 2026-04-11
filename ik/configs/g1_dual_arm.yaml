@@ -1,0 +1,81 @@
+# IK config — G1 dual arm (waist + both arms, 17 DOF)
+#
+# Simultaneously solves for both end-effectors (right_wrist_yaw_link and
+# left_wrist_yaw_link).  The Jacobians from both targets are stacked and
+# minimized together in each DLS step.
+#
+# Usage:
+#   python ik/ik_runner.py ik/configs/g1_dual_arm.yaml
+#   python ik/ik_runner.py ik/configs/g1_dual_arm.yaml --viewer
+#   python ik/ik_runner.py ik/configs/g1_dual_arm.yaml \
+#       --target right_eef 0.45 -0.25 0.90 \
+#       --target left_eef  0.45  0.25 0.90
+
+robot:
+  xml: src/assets/robots/unitree_g1/xmls/g1.xml
+  freeze_legs: true
+
+# ── Target frames ─────────────────────────────────────────────────────────────
+targets:
+  - name: right_eef
+    body: right_wrist_yaw_link
+    position: [0.4, -0.3, 0.8]
+    orientation: [1.0, 0.0, 0.0, 0.0]
+    pos_weight: 1.0
+    ori_weight: 0.5
+
+  - name: left_eef
+    body: left_wrist_yaw_link
+    position: [0.4,  0.3, 0.8]
+    orientation: [1.0, 0.0, 0.0, 0.0]
+    pos_weight: 1.0
+    ori_weight: 0.5
+
+# ── Active joints ─────────────────────────────────────────────────────────────
+joints:
+  active:
+    # Waist (shared between both arms)
+    - waist_yaw_joint
+    - waist_roll_joint
+    - waist_pitch_joint
+    # Right arm
+    - right_shoulder_pitch_joint
+    - right_shoulder_roll_joint
+    - right_shoulder_yaw_joint
+    - right_elbow_joint
+    - right_wrist_roll_joint
+    - right_wrist_pitch_joint
+    - right_wrist_yaw_joint
+    # Left arm
+    - left_shoulder_pitch_joint
+    - left_shoulder_roll_joint
+    - left_shoulder_yaw_joint
+    - left_elbow_joint
+    - left_wrist_roll_joint
+    - left_wrist_pitch_joint
+    - left_wrist_yaw_joint
+
+# ── Initial robot pose ────────────────────────────────────────────────────────
+initial_pose:
+  base_pos:  [0.0, 0.0, 0.8]
+  base_quat: [1.0, 0.0, 0.0, 0.0]
+  joints:
+    left_hip_pitch_joint:   -0.1
+    right_hip_pitch_joint:  -0.1
+    left_knee_joint:         0.3
+    right_knee_joint:        0.3
+    left_ankle_pitch_joint: -0.2
+    right_ankle_pitch_joint: -0.2
+    left_shoulder_pitch_joint:  0.35
+    right_shoulder_pitch_joint: 0.35
+    left_shoulder_roll_joint:   0.18
+    right_shoulder_roll_joint: -0.18
+    left_elbow_joint:   0.87
+    right_elbow_joint:  0.87
+
+# ── Solver hyperparameters ───────────────────────────────────────────────────
+solver:
+  max_iter:  300       # more iterations for 17-DOF dual-arm problem
+  tolerance: 1.0e-3
+  damping:   0.05
+  max_dq:    0.5
