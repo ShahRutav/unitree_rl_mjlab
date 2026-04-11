@@ -1,9 +1,11 @@
 #include "FSM/CtrlFSM.h"
 #include "FSM/State_Passive.h"
 #include "FSM/State_FixStand.h"
+#include "FSM/State_FixSit.h"
 #include "FSM/State_RLBase.h"
-#include "State_Mimic.h"
 #include "FSM/State_JointCmd.h"
+#include "FSM/State_PrintJoints.h"
+#include "FSM/State_SingleJointCmd.h"
 
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
 std::shared_ptr<LowState_t> FSMState::lowstate = nullptr;
@@ -49,12 +51,7 @@ int main(int argc, char** argv)
     auto fsm = std::make_unique<CtrlFSM>(param::config["FSM"]);
     fsm->start();
 
-    std::cout << "Keyboard controls (state-dependent):\n";
-    std::cout << "  Passive       : [1] -> FixStand  | [4] -> JointCmd\n";
-    std::cout << "  FixStand      : [2] -> Velocity  | [0] -> Passive\n";
-    std::cout << "  Velocity      : [3] -> Mimic/Dance | [0] -> Passive\n";
-    std::cout << "  Mimic/Dance   : [2] -> Velocity  | [0] -> Passive\n";
-    std::cout << "  JointCmd      : [0] -> Passive\n";
+    std::cout << State_Passive::keyboard_help;
 
     while (true)
     {

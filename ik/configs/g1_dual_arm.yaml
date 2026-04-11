@@ -60,7 +60,7 @@ joints:
   limits:
     waist_yaw_joint:   [-1.0,  1.0]
     waist_roll_joint:  [-0.5,  0.5]
-    waist_pitch_joint: [-0.5,  0.8]
+    waist_pitch_joint: [-0.5236, 0.5236]   # ±30 deg
     # Forbid elbow hyperextension on both sides
     right_elbow_joint: [0.0, null]
     left_elbow_joint:  [0.0, null]

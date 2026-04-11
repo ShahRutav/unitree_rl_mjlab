@@ -4,10 +4,13 @@
 # ---------- ZMQ subscriber ----------
 zmq_address: "tcp://localhost:5555"
 
-# ---------- ZMQ feedback publisher ----------
-enable_feedback_pub: true          # publish q_current + q_target for live plotting
+# ---------- ZMQ feedback publisher (arm_cmd.py reads q_current here) ----------
+enable_feedback_pub: true          # publish q_current + q_target for arm_cmd gravity comp
 zmq_feedback_address: "tcp://*:5556"
 feedback_decimation: 5             # publish every N ticks (5 = 200 Hz at 1 kHz FSM)
+
+# ---------- ZMQ plot publisher (plot_joint_error.py reads here) ----------
+zmq_plot_address: "tcp://*:5558"   # dedicated port for plot_joint_error.py
 zmq_rcvtimeo_ms: 100     # ZMQ receive timeout (ms); used by the background thread
                           # for clean shutdown — lower = faster exit, higher = less CPU wakeup
 zmq_poll_sleep_ms: 1     # sleep between non-blocking polls (ms); keeps CPU usage low
@@ -27,25 +30,25 @@ threshold_discard_sum:   6.2832  # discard if sum(|err|) across all joints > thi
 interp_duration: 2.0             # time (s) to interpolate from current to target
 
 # ---------- default hold pose (sent until the first ZMQ command arrives) ----------
-# Matches the g1_sitting.xml keyframe exactly:
-#   legs: hip_pitch=-π/2, knee=+π/2, everything else 0
+# Matches the g1_sitting.xml keyframe:
+#   legs: hip_pitch=-π/2 ≈ -1.5708, knee=70° ≈ 1.2217, everything else 0
 #   arms: all 0  (neutral sitting pose)
 # Order: left_leg(6) right_leg(6) waist(3) left_arm(7) right_arm(7)
 q_default: [
-  -1.5708, 0.0, 0.0,  1.5708, 0.0, 0.0,   # left leg  (hip_pitch=-π/2, knee=+π/2)
-  -1.5708, 0.0, 0.0,  1.5708, 0.0, 0.0,   # right leg
+  -1.5708, 0.0, 0.0,  1.2217, 0.0, 0.0,   # left leg  (hip_pitch=-π/2, knee=70°)
+  -1.5708, 0.0, 0.0,  1.2217, 0.0, 0.0,   # right leg
    0.0, 0.0, 0.0,                          # waist
-   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,     # left arm  (all 0 — g1_sitting keyframe)
-   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,     # right arm (all 0 — g1_sitting keyframe)
+   0.0, 0.1745, 0.0, 0.0, 0.0, 0.0, 0.0,   # left arm  (shoulder_roll=10° away from body)
+   0.0,-0.1745, 0.0, 0.0, 0.0, 0.0, 0.0,  # right arm (shoulder_roll=10° away from body)
 ]
 
 # ---------- PD gains (29 DOF: left-leg, right-leg, waist, left-arm, right-arm) ----------
 kp: [
   100, 100, 100, 150, 40, 40,
   100, 100, 100, 150, 40, 40,
-  200, 200, 200,
+  200, 200, 400,
   40, 40, 40, 40, 40, 40, 40,
-  40, 40, 40, 40, 40, 40, 40,
+  40, 40, 40, 80, 40, 40, 40,
 ]
 kd: [
   2, 2, 2, 4, 2, 2,

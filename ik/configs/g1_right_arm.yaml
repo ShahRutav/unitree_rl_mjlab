@@ -70,7 +70,7 @@ joints:
   limits:
     waist_yaw_joint:              [-1.0,  1.0]   # model range: ±2.76 rad
     waist_roll_joint:             [-0.5,  0.5]   # model range: ±0.52 rad
-    waist_pitch_joint:            [-0.5,  0.8]   # model range: -0.26 to +0.52 rad
+    waist_pitch_joint:            [-0.5236, 0.5236]   # ±30 deg
     right_shoulder_pitch_joint:   [null, null]   # use model limits unchanged
     right_shoulder_roll_joint:    [null, null]
     right_shoulder_yaw_joint:     [null, null]

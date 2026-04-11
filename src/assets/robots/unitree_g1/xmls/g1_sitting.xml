@@ -325,14 +325,14 @@
     <joint joint1="left_hip_pitch_joint"  polycoef="-1.5708 0 0 0 0"/>
     <joint joint1="left_hip_roll_joint"   polycoef="0 0 0 0 0"/>
     <joint joint1="left_hip_yaw_joint"    polycoef="0 0 0 0 0"/>
-    <joint joint1="left_knee_joint"       polycoef="1.5708 0 0 0 0"/>
+    <joint joint1="left_knee_joint"       polycoef="1.2217 0 0 0 0"/>
     <joint joint1="left_ankle_pitch_joint" polycoef="0 0 0 0 0"/>
     <joint joint1="left_ankle_roll_joint"  polycoef="0 0 0 0 0"/>
 
     <joint joint1="right_hip_pitch_joint" polycoef="-1.5708 0 0 0 0"/>
     <joint joint1="right_hip_roll_joint"  polycoef="0 0 0 0 0"/>
     <joint joint1="right_hip_yaw_joint"   polycoef="0 0 0 0 0"/>
-    <joint joint1="right_knee_joint"      polycoef="1.5708 0 0 0 0"/>
+    <joint joint1="right_knee_joint"      polycoef="1.2217 0 0 0 0"/>
     <joint joint1="right_ankle_pitch_joint" polycoef="0 0 0 0 0"/>
     <joint joint1="right_ankle_roll_joint"  polycoef="0 0 0 0 0"/>
   </equality>

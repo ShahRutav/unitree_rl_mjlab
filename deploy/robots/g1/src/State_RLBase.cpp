@@ -53,8 +53,22 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
 
 void State_RLBase::run()
 {
+    if (rejected_)
+    {
+        int n = static_cast<int>(lowcmd->msg_.motor_cmd().size());
+        for (int i = 0; i < n; ++i)
+            lowcmd->msg_.motor_cmd()[i].q() = lowstate->msg_.motor_state()[i].q();
+
+        if ((++warn_ticks_) % 2000 == 0)
+        {
+            std::cerr << "\033[31m[Velocity] Still rejected — press [0] to return to Passive.\033[0m\n"
+                      << std::flush;
+        }
+        return;
+    }
+
     auto action = env->action_manager->processed_actions();
-    for(int i(0); i < env->robot->data.joint_ids_map.size(); i++) {
+    for(int i(0); i < (int)env->robot->data.joint_ids_map.size(); i++) {
         lowcmd->msg_.motor_cmd()[env->robot->data.joint_ids_map[i]].q() = action[i];
     }
 }

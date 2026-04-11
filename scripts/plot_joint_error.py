@@ -2,25 +2,17 @@
 """
 Live rolling plot of joint tracking error: q_current - q_target
 
-Subscribes to the ZMQ feedback PUB published by State_JointCmd (port 5556).
-Maintains a rolling buffer of the last N samples and plots error per joint.
+Three-panel layout with shared time axis:
+  - Legs     (indices 0-11): Left leg solid blue tones, Right leg dashed red/orange tones
+  - Waist    (indices 12-14)
+  - Right Arm (indices 22-28)
 
 Usage:
-  # all 29 joints (busy but complete)
-  python3 scripts/plot_joint_error.py
-
-  # right elbow only
-  python3 scripts/plot_joint_error.py --joints 25
-
-  # full right arm
-  python3 scripts/plot_joint_error.py --joints 22 23 24 25 26 27 28
-
-  # waist + right arm, last 5000 samples, fixed y-axis
-  python3 scripts/plot_joint_error.py --joints 12 13 14 22 23 24 25 26 27 28 \\
-                                      --buffer 5000 --yrange -0.5 0.5
-
-  # save samples to CSV as well
-  python3 scripts/plot_joint_error.py --joints 25 --csv /tmp/elbow_error.csv
+  python3 scripts/plot_joint_error.py                        # all three panels
+  python3 scripts/plot_joint_error.py --groups arm           # right arm only
+  python3 scripts/plot_joint_error.py --groups legs arm      # legs + arm, no waist
+  python3 scripts/plot_joint_error.py --buffer 5000 --yrange -0.5 0.5
+  python3 scripts/plot_joint_error.py --groups arm --csv /tmp/arm_error.csv
 """
 
 import argparse
@@ -32,7 +24,6 @@ import time
 
 import zmq
 import numpy as np
-import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
@@ -48,19 +39,52 @@ JOINT_NAMES = [
     "R_wrist_roll", "R_wrist_pitch", "R_wrist_yaw",                                        # 26-28
 ]
 
+# Per-group color + linestyle definitions ------------------------------------
+# Left leg:  solid, blue family
+# Right leg: dashed, red/orange family
+_LEFT_LEG_COLORS  = ["#1f77b4", "#17becf", "#0a6fc2", "#00aacc", "#005fa3", "#00c8c8"]
+_RIGHT_LEG_COLORS = ["#d62728", "#ff7f0e", "#b22222", "#ff4500", "#e08000", "#8b0000"]
+_WAIST_COLORS     = ["#9467bd", "#8c564b", "#e377c2"]
+_ARM_COLORS       = ["#2ca02c", "#98df8a", "#17becf", "#aec7e8", "#ff9896", "#f7b6d2", "#c5b0d5"]
+
+GROUP_DEFS = {
+    "legs": {
+        "title": "Leg Joints  (solid = Left · dashed = Right)",
+        "joints": list(range(12)),
+        "colors": _LEFT_LEG_COLORS + _RIGHT_LEG_COLORS,
+        "linestyles": ["solid"] * 6 + ["dashed"] * 6,
+        "legend_ncol": 2,
+    },
+    "waist": {
+        "title": "Waist Joints",
+        "joints": [12, 13, 14],
+        "colors": _WAIST_COLORS,
+        "linestyles": ["solid"] * 3,
+        "legend_ncol": 1,
+    },
+    "arm": {
+        "title": "Right Arm Joints",
+        "joints": [22, 23, 24, 25, 26, 27, 28],
+        "colors": _ARM_COLORS,
+        "linestyles": ["solid"] * 7,
+        "legend_ncol": 1,
+    },
+}
+
+ALL_GROUPS = ["legs", "waist", "arm"]
+
 # ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Live joint tracking error plot (q_current - q_target)",
+        description="Live joint tracking error plot — grouped by body segment",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument(
-        "--joints", type=int, nargs="+",
-        default=[12, 13, 14, 22, 23, 24, 25, 26, 27, 28],
-        metavar="J",
-        help="Joint indices to plot 0-28 (default: waist + right arm, indices 12-14 and 22-28)",
+        "--groups", nargs="+", choices=ALL_GROUPS, default=ALL_GROUPS,
+        metavar="GROUP",
+        help=f"Body groups to show: {ALL_GROUPS} (default: all three)",
     )
     parser.add_argument(
         "--buffer", type=int, default=10000,
@@ -71,73 +95,106 @@ def main():
         help="Plot refresh rate in Hz (default: 30)",
     )
     parser.add_argument(
-        "--address", default="tcp://localhost:5556",
-        help="ZMQ address to connect to (default: tcp://localhost:5556)",
+        "--address", default="tcp://localhost:5558",
+        help="ZMQ address to connect to (default: tcp://localhost:5558)",
     )
     parser.add_argument(
         "--yrange", type=float, nargs=2, metavar=("YMIN", "YMAX"),
-        help="Fixed y-axis range in radians (default: auto-scale)",
+        help="Fixed y-axis range in radians applied to all panels (default: auto-scale)",
     )
     parser.add_argument(
         "--csv", metavar="FILE",
-        help="Also write samples to CSV file (appends)",
+        help="Also write all plotted joint errors to a CSV file",
     )
     args = parser.parse_args()
 
-    joints = [j for j in args.joints if 0 <= j < 29]
-    if not joints:
-        print("No valid joint indices (must be 0-28).", file=sys.stderr)
+    # Deduplicate --groups while preserving order
+    seen = set()
+    active_groups = [g for g in args.groups if not (g in seen or seen.add(g))]
+    if not active_groups:
+        print("No valid groups selected.", file=sys.stderr)
         sys.exit(1)
 
-    n = len(joints)
-    print(f"[plot_joint_error] joints: {[JOINT_NAMES[j] for j in joints]}")
-    print(f"[plot_joint_error] buffer={args.buffer}  hz={args.hz}  address={args.address}")
+    # Build per-group runtime state ------------------------------------------
+    groups = []
+    for gname in active_groups:
+        gdef = GROUP_DEFS[gname]
+        joints = gdef["joints"]
+        groups.append({
+            **gdef,
+            "name": gname,
+            "t_bufs":   [collections.deque(maxlen=args.buffer) for _ in joints],
+            "err_bufs": [collections.deque(maxlen=args.buffer) for _ in joints],
+        })
 
-    # ZMQ subscriber -----------------------------------------------------------
+    all_joint_indices = sorted({j for g in groups for j in g["joints"]})
+
+    print(f"[plot_joint_error] groups  : {active_groups}")
+    print(f"[plot_joint_error] buffer  : {args.buffer}  hz={args.hz}  address={args.address}")
+
+    # ZMQ subscriber ---------------------------------------------------------
     ctx = zmq.Context()
     socket = ctx.socket(zmq.SUB)
     socket.connect(args.address)
     socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
-    # Rolling buffers per joint ------------------------------------------------
-    t_bufs   = [collections.deque(maxlen=args.buffer) for _ in joints]
-    err_bufs = [collections.deque(maxlen=args.buffer) for _ in joints]
-    t_start  = time.monotonic()
+    t_start = time.monotonic()
 
-    # Optional CSV writer ------------------------------------------------------
+    # Optional CSV writer ----------------------------------------------------
     csv_file   = None
     csv_writer = None
     if args.csv:
         csv_file = open(args.csv, "w", newline="")
         csv_writer = csv.writer(csv_file)
-        csv_writer.writerow(["time_s", "tick"] + [f"err_{JOINT_NAMES[j]}" for j in joints])
-        print(f"[plot_joint_error] writing CSV → {args.csv}")
+        csv_writer.writerow(
+            ["time_s", "tick"] + [f"err_{JOINT_NAMES[j]}" for j in all_joint_indices]
+        )
+        print(f"[plot_joint_error] CSV     : {args.csv}")
 
-    # Plot setup ---------------------------------------------------------------
-    colors = [plt.cm.tab20((i % 20) / 20.0) for i in range(n)]
+    # Figure & subplots (shared x-axis) --------------------------------------
+    n_panels = len(groups)
+    fig, axes = plt.subplots(
+        n_panels, 1,
+        figsize=(13, 4.0 * n_panels),
+        sharex=True,
+        squeeze=False,
+    )
+    axes  = [row[0] for row in axes]          # flatten (n,1) → list of n
+    axes2 = [ax.twinx() for ax in axes]       # right-hand rad axis per panel
 
-    fig, ax = plt.subplots(figsize=(13, 5))
-    lines = []
-    for i, j in enumerate(joints):
-        (ln,) = ax.plot([], [], color=colors[i],
-                        label=f"{j}: {JOINT_NAMES[j]}", lw=1.2)
-        lines.append(ln)
+    all_lines = []
+    for g, ax, ax2 in zip(groups, axes, axes2):
+        lines = []
+        for i, j in enumerate(g["joints"]):
+            (ln,) = ax.plot(
+                [], [],
+                color=g["colors"][i],
+                linestyle=g["linestyles"][i],
+                label=f"{j}: {JOINT_NAMES[j]}",
+                lw=1.2,
+            )
+            lines.append(ln)
+        g["lines"] = lines
+        all_lines.extend(lines)
 
-    ax.axhline(0.0, color="black", lw=0.6, linestyle="--", zorder=0, alpha=0.5)
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Error  (rad)")
-    ax.set_title("Joint Tracking Error  (q_current − q_target)")
+        ax.axhline(0.0, color="black", lw=0.6, linestyle="--", zorder=0, alpha=0.4)
+        ax.set_ylabel("Error  (deg)")
+        ax2.set_ylabel("Error  (rad)", labelpad=4)
+        ax.set_title(g["title"], fontsize=9, loc="left", pad=3)
 
-    if args.yrange:
-        ax.set_ylim(args.yrange)
+        if args.yrange:
+            ax2.set_ylim(args.yrange)
+            ax.set_ylim(np.degrees(args.yrange[0]), np.degrees(args.yrange[1]))
 
-    ncol = max(1, n // 12)
-    ax.legend(loc="upper right", fontsize=6, ncol=ncol)
+        ax.legend(loc="upper right", fontsize=6, ncol=g["legend_ncol"])
+
+    axes[-1].set_xlabel("Time  (s)")
+    fig.suptitle("Joint Tracking Error  (q_current − q_target)", fontsize=11)
     fig.tight_layout()
 
-    # Animation ----------------------------------------------------------------
+    # Animation --------------------------------------------------------------
     def update(_frame):
-        # Drain all pending ZMQ messages (non-blocking)
+        # Drain pending ZMQ messages (non-blocking)
         received = 0
         try:
             while True:
@@ -148,16 +205,19 @@ def main():
                 q_g   = data["q_target"]
                 tick  = data.get("tick", -1)
 
-                row_errs = []
-                for bi, j in enumerate(joints):
-                    err = q_c[j] - q_g[j]
-                    t_bufs[bi].append(t_now)
-                    err_bufs[bi].append(err)
-                    row_errs.append(err)
+                csv_errs = {}
+                for g in groups:
+                    for bi, j in enumerate(g["joints"]):
+                        err = q_c[j] - q_g[j]
+                        g["t_bufs"][bi].append(t_now)
+                        g["err_bufs"][bi].append(err)
+                        csv_errs[j] = err
 
                 if csv_writer is not None:
-                    csv_writer.writerow([f"{t_now:.4f}", tick] +
-                                        [f"{e:.6f}" for e in row_errs])
+                    csv_writer.writerow(
+                        [f"{t_now:.4f}", tick] +
+                        [f"{csv_errs[j]:.6f}" for j in all_joint_indices]
+                    )
 
                 received += 1
                 if received >= 1000:   # yield so the plot doesn't freeze
@@ -165,25 +225,31 @@ def main():
         except zmq.Again:
             pass
 
-        # Update plot lines
-        for i, ln in enumerate(lines):
-            xs = list(t_bufs[i])
-            ys = list(err_bufs[i])
-            ln.set_data(xs, ys)
+        # Update lines per panel
+        for g, ax, ax2 in zip(groups, axes, axes2):
+            for i, ln in enumerate(g["lines"]):
+                xs = list(g["t_bufs"][i])
+                ys = [np.degrees(v) for v in g["err_bufs"][i]]
+                ln.set_data(xs, ys)
 
-        # Slide x-axis to cover the current data window
-        if any(t_bufs[i] for i in range(n)):
-            x_min = min(t_bufs[i][0]  for i in range(n) if t_bufs[i])
-            x_max = max(t_bufs[i][-1] for i in range(n) if t_bufs[i])
-            ax.set_xlim(x_min, max(x_max, x_min + 1.0))
+            if not args.yrange:
+                ax.relim()
+                ax.autoscale_view(scalex=False)
 
-        if not args.yrange:
-            ax.relim()
-            ax.autoscale_view(scalex=False)
+            # Keep rad axis in sync with deg axis
+            ymin_deg, ymax_deg = ax.get_ylim()
+            ax2.set_ylim(np.radians(ymin_deg), np.radians(ymax_deg))
 
-        return lines
+        # Shared x-axis: compute from all active buffers
+        all_bufs = [buf for g in groups for buf in g["t_bufs"] if buf]
+        if all_bufs:
+            x_min = min(b[0]  for b in all_bufs)
+            x_max = max(b[-1] for b in all_bufs)
+            axes[0].set_xlim(x_min, max(x_max, x_min + 1.0))
 
-    ani = animation.FuncAnimation(   # noqa: F841 (kept alive by reference)
+        return all_lines
+
+    ani = animation.FuncAnimation(   # noqa: F841  (kept alive by reference)
         fig, update,
         interval=1000.0 / args.hz,
         blit=False,

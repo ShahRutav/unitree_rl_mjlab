@@ -2,26 +2,34 @@ FSM:
   _: # enabled fsms
     Passive:
       id: 1
-    FixStand:
+    FixSit:
       id: 2
     Velocity:
       id: 3
       type: RLBase
-
-    Mimic_Dance1_subject2:
-      id: 5
-      type: Mimic
+    FixStand:
+      id: 4
 
     JointCmd:
       id: 6
+
+    PrintJoints:
+      id: 7
+
+    SingleJointCmd:
+      id: 8
 
 
   Passive:
     transitions:
       FixStand: LT + up.on_pressed
+      FixSit: LT + down.on_pressed
     keyboard_transitions:
       FixStand: "1"
+      FixSit: "2"
       JointCmd: "4"
+      PrintJoints: "8"
+      SingleJointCmd: "9"
     mode: [
       1,1,1,1,1,1,
       1,1,1,1,1,1,
@@ -41,10 +49,13 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
+      FixSit: LT + down.on_pressed
       Velocity: RT + A.on_pressed
     keyboard_transitions:
       Passive: "0"
-      Velocity: "2"
+      FixSit: "2"
+      Velocity: "3"
+      JointCmd: "4"
 
     kp: [
       100,100,100,150,40,40,
@@ -72,30 +83,57 @@ FSM:
     ]
 
 
+  FixSit:
+    transitions:
+      Passive: LT + B.on_pressed
+    keyboard_transitions:
+      Passive: "0"
+      JointCmd: "4"
+
+    # Same PD gains as FixStand
+    # Order: left_leg(6) right_leg(6) waist(3) left_arm(7) right_arm(7)
+    kp: [
+      100,100,100,150,40,40,
+      100,100,100,150,40,40,
+      200,200,200,
+      40,40,40,40,40,40,40,
+      40,40,40,40,40,40,40,
+    ]
+    kd: [
+      2,2,2,4,2,2,
+      2,2,2,4,2,2,
+      5,5,5,
+      10,10,10,10,10,10,10,
+      10,10,10,10,10,10,10,
+    ]
+    ts: [0, 3]
+    qs: [
+      [],
+      # Sitting pose: hip_pitch = -π/2 ≈ -1.5708, knee = 70° ≈ 1.2217 (20° less than π/2)
+      # All other leg joints = 0; waist = 0; arms spread 10° further out (shoulder_roll ±0.3545)
+      [ -1.5708, 0,0, 1.2217, 0,0,
+        -1.5708, 0,0, 1.2217, 0,0,
+        0,0,0,
+        0.35, 0.3545,0,0.87,0,0,0,
+        0.35,-0.3545,0,0.87,0,0,0
+      ]
+    ]
+    # Standing-check thresholds (rad).
+    # Reject if avg_knee < knee_threshold AND avg_hip_pitch > hip_pitch_threshold
+    # (both must be true for the robot to be considered "standing").
+    standing_check:
+      knee_threshold: 0.5       # standing knee ≈ 0.3 rad, sitting ≈ 1.57 rad
+      hip_pitch_threshold: -0.5 # standing hip_pitch ≈ -0.1 rad, sitting ≈ -1.57 rad
+
+
   Velocity:
     transitions:
       Passive: LT + B.on_pressed
-      Mimic_Dance1_subject2: RB + A.on_pressed
     keyboard_transitions:
       Passive: "0"
-      Mimic_Dance1_subject2: "3"
 
     policy_dir: config/policy/velocity
 
-
-  Mimic_Dance1_subject2:
-    transitions:
-      Passive: LT + B.on_pressed
-      Velocity: RT + A.on_pressed
-    keyboard_transitions:
-      Passive: "0"
-      Velocity: "2"
-
-    motion_file: config/policy/mimic/dance1_subject2/params/dance1_subject2.npz
-    policy_dir: config/policy/mimic/dance1_subject2/
-    time_start: 0.0
-    time_end: 1000.0
-    end_state: Passive
 
   JointCmd:
     transitions:
@@ -103,3 +141,35 @@ FSM:
     keyboard_transitions:
       Passive: "0"
     # All other JointCmd parameters (gains, thresholds, zmq) live in joint_cmd.yaml
+
+  PrintJoints:
+    transitions:
+      Passive: LT + B.on_pressed
+    keyboard_transitions:
+      Passive: "0"
+    print_every_n_ticks: 200   # refresh rate (1 kHz FSM => 200 = 5 Hz)
+
+  SingleJointCmd:
+    transitions:
+      Passive: LT + B.on_pressed
+    keyboard_transitions:
+      Passive: "0"
+    joint_index: 25            # which joint to move (25 = R_elbow; see JointIndex in defines.h)
+    delta_q_deg: -45.0         # offset from current position in degrees (+/-)
+    interp_duration: 2.0       # seconds to interpolate from current to target
+    # PD gains for all 29 joints (same values as JointCmd / FixStand)
+    # Order: left_leg(6) right_leg(6) waist(3) left_arm(7) right_arm(7)
+    kp: [
+      100, 100, 100, 150, 40, 40,
+      100, 100, 100, 150, 40, 40,
+      200, 200, 200,
+       40,  40,  40,  40,  40,  40,  40,
+       40,  40,  40,  40,  40,  40,  40,
+    ]
+    kd: [
+      2, 2, 2, 4, 2, 2,
+      2, 2, 2, 4, 2, 2,
+      5, 5, 5,
+      10, 10, 10, 10, 10, 10, 10,
+      10, 10, 10, 10, 10, 10, 10,
+    ]

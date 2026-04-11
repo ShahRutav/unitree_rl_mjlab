@@ -39,6 +39,7 @@ public:
         enable_feedback_pub_  = cfg["enable_feedback_pub"]  ? cfg["enable_feedback_pub"].as<bool>()         : true;
         zmq_feedback_address_ = cfg["zmq_feedback_address"] ? cfg["zmq_feedback_address"].as<std::string>() : "tcp://*:5556";
         feedback_decimation_  = cfg["feedback_decimation"]  ? cfg["feedback_decimation"].as<int>()          : 5;
+        zmq_plot_address_     = cfg["zmq_plot_address"]     ? cfg["zmq_plot_address"].as<std::string>()     : "tcp://*:5558";
     }
 
     // -----------------------------------------------------------------------
@@ -53,9 +54,12 @@ public:
             motor.dq()  = motor.tau() = 0;
         }
 
-        // 2. Seed the hold pose from q_default (sitting pose from joint_cmd.yaml).
-        //    This is sent immediately on entry and held until the first ZMQ command.
+        // 2. Seed the hold pose: lower body (legs, indices 0-11) from current
+        //    sensor readings so the robot doesn't move on entry; upper body
+        //    (waist + arms, indices 12+) from q_default.
         q_hold_ = q_default_;
+        for (int i = 0; i < 12 && i < static_cast<int>(q_hold_.size()); ++i)
+            q_hold_[i] = lowstate->msg_.motor_state()[i].q();
 
         // 3. Reset state
         in_interp_ = false;
@@ -67,13 +71,17 @@ public:
         // 4. Create receiver
         receiver_ = std::make_unique<JointCmdReceiver>(zmq_address_, zmq_rcvtimeo_ms_, zmq_poll_sleep_ms_);
 
-        // 5. Create feedback publisher (if enabled)
+        // 5. Create feedback publisher (if enabled) and plot publisher
         if (enable_feedback_pub_) {
             feedback_ctx_    = std::make_unique<zmq::context_t>(1);
             feedback_socket_ = std::make_unique<zmq::socket_t>(*feedback_ctx_, zmq::socket_type::pub);
             feedback_socket_->bind(zmq_feedback_address_);
             spdlog::info("[JointCmd] feedback pub bound to {}", zmq_feedback_address_);
         }
+        plot_ctx_    = std::make_unique<zmq::context_t>(1);
+        plot_socket_ = std::make_unique<zmq::socket_t>(*plot_ctx_, zmq::socket_type::pub);
+        plot_socket_->bind(zmq_plot_address_);
+        spdlog::info("[JointCmd] plot pub bound to {}", zmq_plot_address_);
 
         // 6. Initialise controller fields
         controller_.threshold_direct         = threshold_direct_;
@@ -180,13 +188,15 @@ public:
                 lowcmd->msg_.motor_cmd()[i].q() = q_hold_[i];
         }
 
-        // Publish feedback: q_current vs final goal
-        if (enable_feedback_pub_ && feedback_socket_ &&
-            tick_ % static_cast<uint32_t>(feedback_decimation_) == 0)
+        // Publish feedback + plot at the configured decimation rate
+        if (tick_ % static_cast<uint32_t>(feedback_decimation_) == 0)
         {
             const auto& q_goal = in_interp_ ? q_target_ : q_hold_;
             auto s = make_feedback_json(tick_, q_current, q_goal);
-            feedback_socket_->send(zmq::buffer(s), zmq::send_flags::dontwait);
+            if (enable_feedback_pub_ && feedback_socket_)
+                feedback_socket_->send(zmq::buffer(s), zmq::send_flags::dontwait);
+            if (plot_socket_)
+                plot_socket_->send(zmq::buffer(s), zmq::send_flags::dontwait);
         }
     }
 
@@ -197,6 +207,11 @@ public:
             feedback_socket_->close();
             feedback_socket_.reset();
             feedback_ctx_.reset();
+        }
+        if (plot_socket_) {
+            plot_socket_->close();
+            plot_socket_.reset();
+            plot_ctx_.reset();
         }
         receiver_.reset();  // destructor joins thread
         spdlog::info("[JointCmd] exited");
@@ -296,12 +311,17 @@ private:
     uint32_t last_discard_log_tick_ = 0;
     uint32_t last_direct_log_tick_  = 0;
 
-    // Feedback publisher
+    // Feedback publisher (arm_cmd.py reads q_current from here)
     bool        enable_feedback_pub_  = false;
     std::string zmq_feedback_address_ = "tcp://*:5556";
     int         feedback_decimation_  = 5;
     std::unique_ptr<zmq::context_t>  feedback_ctx_;
     std::unique_ptr<zmq::socket_t>   feedback_socket_;
+
+    // Plot publisher (plot_joint_error.py reads q_current+q_target from here)
+    std::string zmq_plot_address_ = "tcp://*:5558";
+    std::unique_ptr<zmq::context_t>  plot_ctx_;
+    std::unique_ptr<zmq::socket_t>   plot_socket_;
 
     static constexpr float dt_ = 0.001f;
 };
