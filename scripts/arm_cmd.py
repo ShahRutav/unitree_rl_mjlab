@@ -254,6 +254,11 @@ def main():
         print(f"  IK targets      : {list(body_map.keys())}")
     print(f"  Inspire hands   : {'DDS (' + args.hand_interface + ')' if hand_ctrl else 'disabled'}")
     print("=" * 60)
+    if hand_ctrl is None:
+        print("\033[91m[arm_cmd] WARNING: hand commands will be DROPPED — pass --hand-interface <eth> to enable\033[0m")
+        print("\033[91m          To enable: ssh unitree@192.168.123.164 then run:\033[0m")
+        print("\033[91m            sudo /home/unitree/dfx_inspire_service/build/inspire_g1\033[0m")
+        print("\033[91m          then restart arm_cmd.py with --hand-interface <eth>\033[0m")
     print("[arm_cmd] waiting 500 ms for subscribers to connect…")
     time.sleep(0.5)
     print("[arm_cmd] running — Ctrl-C to stop")
@@ -265,7 +270,7 @@ def main():
     gravity_offset = [0.0] * 29
     q_current = None
     warm_start = None
-    hand_desired = [0.5] * 12  # neutral half-open; [R0..R5, L0..L5], range 0.0-1.0
+    hand_desired = [1.0] * 12  # fully open; [R0..R5, L0..L5], range 0.0-1.0
 
     try:
         while True:
