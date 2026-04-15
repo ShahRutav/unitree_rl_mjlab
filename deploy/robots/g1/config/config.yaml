@@ -27,7 +27,6 @@ FSM:
     keyboard_transitions:
       FixStand: "1"
       FixSit: "2"
-      JointCmd: "4"
       PrintJoints: "8"
       SingleJointCmd: "9"
     mode: [

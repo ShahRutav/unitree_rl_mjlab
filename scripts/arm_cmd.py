@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 """
-arm_cmd.py — Unified motion commander for the G1 arm.
+arm_cmd.py — Unified motion commander for the G1 arm + Inspire hands.
 
 Binds a ZMQ SUB socket on port 5557 to receive high-level commands:
   {"type": "joints",    "q": [29 floats]}
+  {"type": "joints",    "q": [29 floats], "hand": [12 floats]}
   {"type": "cartesian", "targets": {"right_eef": [x, y, z], ...}}
+  {"type": "cartesian", "targets": {...},  "hand": [12 floats]}
+
+The optional "hand" field controls the Inspire hands via the dfx_inspire_service
+DDS bridge (rt/inspire/cmd).  Ordering: [R_pinky, R_ring, R_mid, R_idx,
+R_thumb_bend, R_thumb_rot, L_pinky, L_ring, L_mid, L_idx, L_thumb_bend,
+L_thumb_rot], each in range 0.0-1.0 (0=closed, 1=open).
+
+Prerequisites: the inspire_g1 service must be running on the robot:
+  sudo ./dfx_inspire_service/build/inspire_g1
 
 Resolves cartesian commands via warm-started differential IK, applies
 model-based gravity compensation, and forwards the corrected 29-vector
@@ -16,6 +26,7 @@ Usage
   python3 scripts/arm_cmd.py --ik-config ik/configs/g1_right_arm.yaml --hz 50
   python3 scripts/arm_cmd.py --no-gravity-comp
   python3 scripts/arm_cmd.py --no-ik
+  python3 scripts/arm_cmd.py --hand-interface eth0
 """
 
 import argparse
@@ -42,6 +53,54 @@ sys.path.insert(0, REPO_ROOT)
 CONFIG_PATH = os.path.join(REPO_ROOT, "deploy", "robots", "g1", "config", "joint_cmd.yaml")
 XML_PATH    = os.path.join(REPO_ROOT, "src", "assets", "robots",
                            "unitree_g1", "xmls", "g1_sitting.xml")
+
+# ---------------------------------------------------------------------------
+# Inspire Hand (DDS via dfx_inspire_service — rt/inspire/cmd)
+# ---------------------------------------------------------------------------
+
+class InspireHandDDS:
+    """Publishes Inspire hand commands via DDS to the dfx_inspire_service bridge.
+
+    The inspire_g1 service must be running on the robot; it bridges DDS ↔ serial.
+
+    Motor ordering in rt/inspire/cmd (12 motors total):
+      0-5:  right hand [pinky, ring, middle, index, thumb_bend, thumb_rot]
+      6-11: left  hand [pinky, ring, middle, index, thumb_bend, thumb_rot]
+
+    Values: 0.0 (closed) to 1.0 (open).
+    """
+
+    def __init__(self, network_interface: str = None):
+        from unitree_sdk2py.core.channel import (
+            ChannelPublisher, ChannelFactoryInitialize
+        )
+        from unitree_sdk2py.idl.unitree_go.msg.dds_ import MotorCmds_
+        from unitree_sdk2py.idl.default import unitree_go_msg_dds__MotorCmd_
+
+        if network_interface:
+            ChannelFactoryInitialize(0, network_interface)
+        else:
+            ChannelFactoryInitialize(0)
+
+        self._cmd = MotorCmds_()
+        for _ in range(12):
+            self._cmd.cmds.append(unitree_go_msg_dds__MotorCmd_())
+
+        self._pub = ChannelPublisher("rt/inspire/cmd", MotorCmds_)
+        self._pub.Init()
+
+    def set_angles(self, values: list) -> None:
+        """Send 12 finger values (clamped to [0,1]). Right hand first, then left."""
+        if len(values) != 12:
+            return
+        for i in range(12):
+            self._cmd.cmds[i].q = float(max(0.0, min(1.0, values[i])))
+        self._pub.Write(self._cmd)
+
+    def close(self) -> None:
+        if hasattr(self, "_pub"):
+            self._pub.Close()
+
 
 # ---------------------------------------------------------------------------
 # MuJoCo joint name → controller index (0-28)
@@ -139,11 +198,17 @@ def main():
                         help="Disable model-based gravity compensation")
     parser.add_argument("--no-ik",       action="store_true",
                         help="Disable IK (cartesian commands will be rejected)")
+    parser.add_argument("--hand-interface", default=None,
+                        help="Network interface for Inspire hand DDS (e.g. eth0). "
+                             "Requires inspire_g1 service running on the robot.")
     args = parser.parse_args()
 
     # ── Load config ──────────────────────────────────────────────────────────
     cfg_yaml = yaml.safe_load(open(CONFIG_PATH))
     q_default = load_q_default()
+
+    # ── Inspire hands (DDS) ──────────────────────────────────────────────────
+    hand_ctrl = InspireHandDDS(args.hand_interface) if args.hand_interface else None
 
     # ── Gravity compensator ──────────────────────────────────────────────────
     gc = None
@@ -187,6 +252,7 @@ def main():
         print(f"  IK config       : {args.ik_config}")
         print(f"  IK active joints: {ik_cfg.active_joints}")
         print(f"  IK targets      : {list(body_map.keys())}")
+    print(f"  Inspire hands   : {'DDS (' + args.hand_interface + ')' if hand_ctrl else 'disabled'}")
     print("=" * 60)
     print("[arm_cmd] waiting 500 ms for subscribers to connect…")
     time.sleep(0.5)
@@ -199,6 +265,7 @@ def main():
     gravity_offset = [0.0] * 29
     q_current = None
     warm_start = None
+    hand_desired = [0.5] * 12  # neutral half-open; [R0..R5, L0..L5], range 0.0-1.0
 
     try:
         while True:
@@ -262,6 +329,14 @@ def main():
                     else:
                         print(f"[arm_cmd] WARN: unknown command type '{ctype}' — ignored")
 
+                    # Optional hand command — valid for any ctype
+                    if "hand" in cmd:
+                        hand_raw = cmd["hand"]
+                        if len(hand_raw) == 12:
+                            hand_desired = [float(max(0.0, min(1.0, x))) for x in hand_raw]
+                        else:
+                            print(f"[arm_cmd] WARN: 'hand' has {len(hand_raw)} values, expected 12 — ignored")
+
                 except (KeyError, json.JSONDecodeError, ValueError) as e:
                     print(f"[arm_cmd] WARN: malformed command — {e}")
 
@@ -271,6 +346,10 @@ def main():
 
             # 5. Build outgoing command
             q_sent = [q_desired[i] + gravity_offset[i] for i in range(29)]
+
+            # 5b. Send hand commands
+            if hand_ctrl is not None:
+                hand_ctrl.set_angles(hand_desired)
 
             # 6. Forward to controller
             out_sock.send_string(json.dumps({"q": q_sent}))
@@ -288,6 +367,8 @@ def main():
         out_sock.close()
         fb_sock.close()
         ctx.term()
+        if hand_ctrl is not None:
+            hand_ctrl.close()
         print("[arm_cmd] done")
 
 

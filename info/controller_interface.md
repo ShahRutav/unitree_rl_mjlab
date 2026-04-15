@@ -18,6 +18,7 @@ gravity compensation, and streams corrected joint commands to the controller at 
          │  ZMQ PUB → connect  port 5557
          │  {"type":"joints",    "q":[29 floats]}
          │  {"type":"cartesian", "targets":{"right_eef":[x,y,z]}}
+         │  optional  "hand": [12 floats, 0-1]   ← add to any message type
          ▼
 ╔═══════════════════════════════════════════════════════════════╗
 ║  scripts/arm_cmd.py                    50 Hz  (--hz flag)     ║
@@ -35,10 +36,12 @@ gravity compensation, and streams corrected joint commands to the controller at 
 ║  q_desired → [Gravity Comp]  q_sent = q_desired + τ_g/Kp     ║
 ║               qfrc_bias/Kp  ← g1_sitting.xml                 ║
 ║               kp            ← joint_cmd.yaml : kp            ║
-╚══════════════╤════════════════════════════════╤══════════════╝
-               │  ZMQ PUB → bind  port 5555     │  ZMQ SUB ← connect  port 5556
-               │  {"q":[29 floats]}  @ 50 Hz    │  feedback @ 200 Hz
-               ▼                                │  {"tick","q_current","q_target"}
+║                                                               ║
+║  hand cmd  → DDS rt/inspire/cmd  (if --hand-interface set)    ║
+╚══════════╤═══════════════════════════════════╤════════════════╝
+           │  ZMQ PUB → bind  port 5555        │  ZMQ SUB ← connect  port 5556
+           │  {"q":[29 floats]}  @ 50 Hz       │  feedback @ 200 Hz
+           ▼                                   │  {"tick","q_current","q_target"}
 ╔══════════════════════════════════════════════╧══════════════════════════╗
 ║  g1_ctrl  (State_JointCmd)                         1000 Hz  (dt_=0.001f)║
 ║  ZMQ SUB ← port 5555  receive joint commands                            ║
@@ -53,6 +56,18 @@ gravity compensation, and streams corrected joint commands to the controller at 
                     │  unitree_mujoco      │  ~500 Hz physics
                     │  (simulator)         │  ← XML <option timestep=...>
                     └─────────────────────┘
+
+  Hand path (real robot only):
+  ────────────────────────────────────────────────────────────────────────
+  arm_cmd.py  ──DDS rt/inspire/cmd──►  inspire_g1  ──serial──►  Inspire hands
+                                       (on robot,               /dev/ttyUSB1 (R)
+                                        sudo required)          /dev/ttyUSB2 (L)
+
+  scripts/test_hand.py  (standalone hand test, no body controller needed)
+  ─────────────────────────────────────────────────────────────────────────
+  DDS PUB → rt/inspire/cmd    (open/close/wave modes)
+  DDS SUB ← rt/inspire/state  (live joint readback)
+
 
   port 5558 consumed by (optional):
   ──────────────────────────────────
@@ -78,6 +93,7 @@ gravity compensation, and streams corrected joint commands to the controller at 
   arm_cmd.py  loop            50 Hz     --hz  flag
   send_joint_cmd.py           50 Hz     --hz  flag
   plot_joint_error.py         30 Hz     --hz  flag
+  inspire_g1 control loop    10 kHz     dfx_inspire_service/inspire_g1.cpp
 ```
 
 `send_joint_cmd.py` is kept as a standalone test/debug tool and is unchanged.
@@ -97,10 +113,23 @@ All messages are JSON, exchanged over ZMQ PUB/SUB.
 // Cartesian mode — IK solve first
 {"type": "cartesian", "targets": {"right_eef": [x, y, z]}}
 {"type": "cartesian", "targets": {"right_eef": [x,y,z], "left_eef": [x,y,z]}}
+
+// Either mode + optional hand control
+{"type": "joints", "q": [29 floats], "hand": [12 floats]}
 ```
 
 - `targets` keys must match names defined in the IK config (e.g. `right_eef`, `left_eef`).
 - If `type` is absent it defaults to `"joints"`.
+- `"hand"` is optional and independent of `type`. If omitted, the last commanded hand pose is held.
+
+**Hand field format** (`"hand"`: 12 floats, range `0.0`=closed → `1.0`=open):
+
+```
+Index  0- 5:  right hand  [pinky, ring, middle, index, thumb_bend, thumb_rot]
+Index  6-11:  left  hand  [pinky, ring, middle, index, thumb_bend, thumb_rot]
+```
+
+Requires `--hand-interface` set and `inspire_g1` running on the robot (see Workflows).
 
 ### Output from arm_cmd.py → controller  (port 5555)
 
@@ -140,6 +169,7 @@ is decoupled from the arm_cmd.py feedback channel.
 | `--hz` | `50` | Control loop rate |
 | `--no-gravity-comp` | off | Disable model-based gravity compensation |
 | `--no-ik` | off | Disable IK (cartesian commands rejected) |
+| `--hand-interface` | *(disabled)* | Network interface for Inspire hand DDS (e.g. `enp4s0`). Requires `inspire_g1` running on the robot. |
 
 ### Control loop (50 Hz)
 
@@ -151,11 +181,67 @@ is decoupled from the arm_cmd.py feedback channel.
      "cartesian" → run IKSolver.solve(targets, warm_start=last_qpos)
                    map result.joint_angles → q_desired (full 29-vector)
                    store result.qpos as warm_start for next call
+     "hand" key  → hand_desired = msg["hand"]   (any type; persists if absent)
 4. gravity_offset = GravityCompensator.compute(q_current)   (if enabled)
 5. q_sent[i] = q_desired[i] + gravity_offset[i]
+5b. hand_ctrl.set_angles(hand_desired)   (if --hand-interface set)
 6. out_socket.send_string(json.dumps({"q": q_sent}))
 7. sleep until next tick
 ```
+
+---
+
+## Inspire Hand Control (real robot only)
+
+The G1's Inspire hands connect to the robot via serial (`/dev/ttyUSB1` right, `/dev/ttyUSB2` left).
+The `inspire_g1` bridge process translates between serial and DDS.
+
+### Architecture
+
+```
+arm_cmd.py / test_hand.py
+    │  DDS  rt/inspire/cmd   (unitree_go::msg::dds_::MotorCmds_, 12 motors)
+    ▼
+inspire_g1   (must run as root on the robot)
+    │  serial  115200 baud, binary protocol
+    ├─► /dev/ttyUSB1   right hand
+    └─► /dev/ttyUSB2   left hand
+```
+
+### Running the hand bridge
+
+```bash
+# On the robot (separate terminal, keep running)
+ssh unitree@192.168.123.164
+sudo ./dfx_inspire_service/build/inspire_g1
+```
+
+### DDS topics
+
+| Topic | Direction | IDL type |
+|-------|-----------|----------|
+| `rt/inspire/cmd` | publish (command) | `unitree_go::msg::dds_::MotorCmds_` |
+| `rt/inspire/state` | subscribe (feedback) | `unitree_go::msg::dds_::MotorStates_` |
+
+12 motors total: indices 0-5 = right hand, 6-11 = left hand.  
+Joint order per hand: `[pinky, ring, middle, index, thumb_bend, thumb_rot]`.  
+Values: `0.0` = closed, `1.0` = open.
+
+### Standalone test (no body controller needed)
+
+```bash
+# Open/close wave with live state readback
+python3 scripts/test_hand.py --interface enp4s0
+
+# Hold open
+python3 scripts/test_hand.py --interface enp4s0 --open
+
+# Hold closed
+python3 scripts/test_hand.py --interface enp4s0 --close
+```
+
+`--interface` is your local Ethernet interface facing the robot (`enp4s0` at `192.168.123.222`).
+DDS discovers across the subnet — the script does **not** need to run on the robot.
 
 ---
 
@@ -239,7 +325,8 @@ Non-active joints stay at `q_default` (the sitting pose from `joint_cmd.yaml`).
 
 | File | Role | Status |
 |------|------|--------|
-| `scripts/arm_cmd.py` | Unified motion commander | **new** |
+| `scripts/arm_cmd.py` | Unified motion commander (body + hands) | **updated** |
+| `scripts/test_hand.py` | Standalone Inspire hand test | **new** |
 | `scripts/send_joint_cmd.py` | Step/sine test sender | unchanged |
 | `scripts/plot_joint_error.py` | Live error plotter | updated — default address → port 5558 |
 | `ik/ik_solver.py` | IK solver library | unchanged |
@@ -248,12 +335,21 @@ Non-active joints stay at `q_default` (the sitting pose from `joint_cmd.yaml`).
 | `deploy/robots/g1/config/joint_cmd.yaml` | PD gains, q_default | unchanged |
 | `dump_scripts/test_arm_cmd_joints.py` | Joint-mode test client | **new** |
 | `dump_scripts/test_arm_cmd_cartesian.py` | Cartesian streaming test client | **new** |
+| `dfx_inspire_service/build/inspire_g1` | Hand serial↔DDS bridge (on robot) | external |
 
 ---
 
 ## Typical Workflows
 
-Start the six terminals in order. T1–T3 are always required; T4 is swapped depending on what you are testing; T5 is optional; T6 is only needed when running an experiment from your own script.
+Start the terminals in order. T0 is real-robot only; T1–T3 are always required; T4 is swapped depending on what you are testing; T5 is optional; T6 is only needed when running an experiment from your own script.
+
+### T0 — Inspire hand bridge  *(real robot only)*
+
+```bash
+# On the robot
+ssh unitree@192.168.123.164
+sudo ./dfx_inspire_service/build/inspire_g1
+```
 
 ### T1 — Simulator
 
@@ -273,6 +369,8 @@ Start the six terminals in order. T1–T3 are always required; T4 is swapped dep
 python3 scripts/arm_cmd.py
 # With dual-arm IK config:
 python3 scripts/arm_cmd.py --ik-config ik/configs/g1_dual_arm.yaml
+# With Inspire hand control (real robot, requires T0):
+python3 scripts/arm_cmd.py --hand-interface enp4s0
 ```
 
 ### T4a — Joint pass-through test client
@@ -324,6 +422,16 @@ sock.send_string(json.dumps({
         "right_eef": [0.45, -0.25, 0.85],
         "left_eef":  [0.45,  0.25, 0.85],
     }
+}))
+
+# With hand control (requires --hand-interface on T3 and inspire_g1 on T0)
+# "hand": [R_pinky, R_ring, R_mid, R_idx, R_thumb_bend, R_thumb_rot,
+#           L_pinky, L_ring, L_mid, L_idx, L_thumb_bend, L_thumb_rot]
+# 0.0 = closed, 1.0 = open
+sock.send_string(json.dumps({
+    "type": "joints",
+    "q": my_29_vector,
+    "hand": [1.0]*6 + [1.0]*6,   # both hands fully open
 }))
 ```
 
