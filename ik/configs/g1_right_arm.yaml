@@ -12,21 +12,24 @@
 robot:
   xml: src/assets/robots/unitree_g1/xmls/g1.xml
 
-  # Pin leg joints and weld pelvis to world so the robot stays upright.
-  # The free joint remains in the model; qpos indices are unchanged.
+  # Pelvis free-joint is placed at world origin so all targets are expressed
+  # directly in the pelvis frame (pelvis = world origin).
+  # Legs are pinned to the sitting pose during IK iterations;
+  # mj_forward does NOT enforce equality constraints — must pin manually.
   freeze_legs: true
-
-  # Optional override of the frozen leg joint angles (radians).
-  # Defaults below match a straight-standing pose (hip=-π/2, knee=+π/2).
-  # frozen_leg_joints:
-  #   left_hip_pitch_joint:  -1.5707963
-  #   left_hip_roll_joint:    0.0
-  #   left_hip_yaw_joint:     0.0
-  #   left_knee_joint:        1.5707963
-  #   right_hip_pitch_joint: -1.5707963
-  #   right_hip_roll_joint:   0.0
-  #   right_hip_yaw_joint:    0.0
-  #   right_knee_joint:       1.5707963
+  frozen_leg_joints:
+    left_hip_pitch_joint:   -1.5708   # -π/2  (thigh horizontal, sitting)
+    left_hip_roll_joint:     0.0
+    left_hip_yaw_joint:      0.0
+    left_knee_joint:         1.2217   # 70°
+    left_ankle_pitch_joint:  0.0
+    left_ankle_roll_joint:   0.0
+    right_hip_pitch_joint:  -1.5708
+    right_hip_roll_joint:    0.0
+    right_hip_yaw_joint:     0.0
+    right_knee_joint:        1.2217
+    right_ankle_pitch_joint: 0.0
+    right_ankle_roll_joint:  0.0
 
 # ── Target frames ─────────────────────────────────────────────────────────────
 # Each target names a body in the MuJoCo model and the desired world-frame pose.
@@ -42,6 +45,12 @@ targets:
     orientation: [1.0, 0.0, 0.0, 0.0]   # identity — no rotation constraint
     pos_weight: 1.0
     ori_weight: 0.5
+
+  # Offset frame: +3 cm X, +3 cm Z relative to right_eef body.
+  # Change body here to update both IK target and visualizer tracking.
+  - name: right_eef_offset
+    body: right_eef_offset
+    position: [0.43, -0.3, 0.83]        # placeholder; overridden at solve time
 
 # ── Active joints & limits ────────────────────────────────────────────────────
 # active : only these joints are updated by the IK solver.
@@ -69,8 +78,8 @@ joints:
   #
   limits:
     waist_yaw_joint:              [-1.0,  1.0]   # model range: ±2.76 rad
-    waist_roll_joint:             [-0.5,  0.5]   # model range: ±0.52 rad
-    waist_pitch_joint:            [-0.5236, 0.5236]   # ±30 deg
+    waist_roll_joint:             [-0.2618, 0.2618]   # ±15 deg
+    waist_pitch_joint:            [-0.2618, 0.2618]   # ±15 deg
     right_shoulder_pitch_joint:   [null, null]   # use model limits unchanged
     right_shoulder_roll_joint:    [null, null]
     right_shoulder_yaw_joint:     [null, null]
@@ -85,17 +94,9 @@ joints:
 # joints    — named joint angles (radians); unset joints default to 0
 
 initial_pose:
-  base_pos:  [0.0, 0.0, 0.8]
+  base_pos:  [0.0, 0.0, 0.0]   # pelvis at world origin → targets are pelvis-relative
   base_quat: [1.0, 0.0, 0.0, 0.0]
   joints:
-    # Legs (standing home pose)
-    left_hip_pitch_joint:   -0.1
-    right_hip_pitch_joint:  -0.1
-    left_knee_joint:         0.3
-    right_knee_joint:        0.3
-    left_ankle_pitch_joint: -0.2
-    right_ankle_pitch_joint: -0.2
-    # Arms (natural resting pose)
     left_shoulder_pitch_joint:  0.35
     right_shoulder_pitch_joint: 0.35
     left_shoulder_roll_joint:   0.18

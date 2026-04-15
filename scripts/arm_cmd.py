@@ -232,15 +232,24 @@ def main():
                         else:
                             targets_raw = cmd.get("targets", {})
                             ik_targets = []
-                            for tname, pos in targets_raw.items():
+                            for tname, val in targets_raw.items():
                                 if tname not in body_map:
                                     print(f"[arm_cmd] WARN: unknown target '{tname}' — ignored")
                                     continue
                                 proto = body_map[tname]
-                                # replace only the position; keep body/orientation/weights from config
-                                ik_targets.append(dataclasses.replace(
-                                    proto, position=np.array(pos, dtype=float)
-                                ))
+                                if isinstance(val, dict):
+                                    pos  = np.array(val["pos"],  dtype=float)
+                                    quat = np.array(val["quat"], dtype=float) if "quat" in val else proto.orientation
+                                    if quat is not None:
+                                        norm = np.linalg.norm(quat)
+                                        if norm > 0:
+                                            quat = quat / norm
+                                    ik_targets.append(dataclasses.replace(proto, position=pos, orientation=quat))
+                                else:
+                                    # backward compat: val is [x, y, z]
+                                    ik_targets.append(dataclasses.replace(
+                                        proto, position=np.array(val, dtype=float)
+                                    ))
                             if ik_targets:
                                 result = ik_solver.solve(targets=ik_targets, warm_start=warm_start)
                                 warm_start = result.qpos   # warm-start next call

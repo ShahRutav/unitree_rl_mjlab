@@ -281,6 +281,10 @@
                           <geom pos="0.0415 -0.003 0" quat="1 0 0 0" class="visual" mesh="right_rubber_hand" material="black"/>
                           <site name="right_palm" pos="0.08 0 0" size="0.01"/>
                           <geom name="right_hand_collision" class="collision" size="0.035" rgba=".2 .6 .2 .2" fromto="0.07 0 0 0.15 0.02 0"/>
+                          <!-- Offset target: +3 cm X, +1.5 cm Z relative to right_wrist_yaw_link -->
+                          <body name="right_eef_offset" pos="0.03 0.0 0.015">
+                            <site name="right_eef_offset_site" size="0.012" rgba="1 0.5 0 1"/>
+                          </body>
                         </body>
                       </body>
                     </body>
@@ -297,12 +301,12 @@
   <!--
     Sitting keyframe: 29 joint values (no freejoint).
     Order: left_leg(6) right_leg(6) waist(3) left_arm(7) right_arm(7)
-    hip_pitch=-π/2, knee=+π/2, everything else 0.
+    hip_pitch=-π/2 ≈ -1.5708, knee=70° ≈ 1.2217, everything else 0.
   -->
   <keyframe>
     <key name="sitting"
-         qpos="-1.5708 0 0 1.5708 0 0
-               -1.5708 0 0 1.5708 0 0
+         qpos="-1.5708 0 0 1.2217 0 0
+               -1.5708 0 0 1.2217 0 0
                 0 0 0
                 0 0 0 0 0 0 0
                 0 0 0 0 0 0 0"/>
@@ -319,7 +323,7 @@
     <!--
       Lock all 12 leg joints at sitting pose:
         hip_pitch = -π/2 ≈ -1.5708  (thigh horizontal, pointing forward in +x)
-        knee      = +π/2 ≈ +1.5708  (shin vertical, pointing down)
+        knee      = 70°  ≈  1.2217  (shin angled, not fully vertical)
         hip_roll, hip_yaw, ankle_pitch, ankle_roll = 0
     -->
     <joint joint1="left_hip_pitch_joint"  polycoef="-1.5708 0 0 0 0"/>

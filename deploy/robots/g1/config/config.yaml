@@ -110,12 +110,12 @@ FSM:
     qs: [
       [],
       # Sitting pose: hip_pitch = -π/2 ≈ -1.5708, knee = 70° ≈ 1.2217 (20° less than π/2)
-      # All other leg joints = 0; waist = 0; arms spread 10° further out (shoulder_roll ±0.3545)
+      # All other leg joints = 0; waist = 0; arms spread out (shoulder_roll ±0.4363 = 25°)
       [ -1.5708, 0,0, 1.2217, 0,0,
         -1.5708, 0,0, 1.2217, 0,0,
         0,0,0,
-        0.35, 0.3545,0,0.87,0,0,0,
-        0.35,-0.3545,0,0.87,0,0,0
+        0.35, 0.4363,0,0.87,0,0,0,
+        0.35,-0.4363,0,0.87,0,0,0
       ]
     ]
     # Standing-check thresholds (rad).

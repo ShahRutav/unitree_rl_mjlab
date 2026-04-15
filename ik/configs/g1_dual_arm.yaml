@@ -13,7 +13,22 @@
 
 robot:
   xml: src/assets/robots/unitree_g1/xmls/g1.xml
+
+  # Pelvis free-joint placed at world origin — targets are in pelvis frame.
   freeze_legs: true
+  frozen_leg_joints:
+    left_hip_pitch_joint:   -1.5708
+    left_hip_roll_joint:     0.0
+    left_hip_yaw_joint:      0.0
+    left_knee_joint:         1.2217
+    left_ankle_pitch_joint:  0.0
+    left_ankle_roll_joint:   0.0
+    right_hip_pitch_joint:  -1.5708
+    right_hip_roll_joint:    0.0
+    right_hip_yaw_joint:     0.0
+    right_knee_joint:        1.2217
+    right_ankle_pitch_joint: 0.0
+    right_ankle_roll_joint:  0.0
 
 # ── Target frames ─────────────────────────────────────────────────────────────
 targets:
@@ -31,6 +46,8 @@ targets:
     pos_weight: 1.0
     ori_weight: 0.5
 
+# ── Locked joints ────────────────────────────────────────────────────────────
+# Joints pinned to exact values — excluded from Jacobian updates entirely.
 # ── Active joints & limits ────────────────────────────────────────────────────
 joints:
   active:
@@ -59,23 +76,17 @@ joints:
   # Absent joints use the model's jnt_range unchanged.
   limits:
     waist_yaw_joint:   [-1.0,  1.0]
-    waist_roll_joint:  [-0.5,  0.5]
-    waist_pitch_joint: [-0.5236, 0.5236]   # ±30 deg
+    waist_roll_joint:  [-0.2618, 0.2618]   # ±15 deg
+    waist_pitch_joint: [-0.2618, 0.2618]   # ±15 deg
     # Forbid elbow hyperextension on both sides
     right_elbow_joint: [0.0, null]
     left_elbow_joint:  [0.0, null]
 
 # ── Initial robot pose ────────────────────────────────────────────────────────
 initial_pose:
-  base_pos:  [0.0, 0.0, 0.8]
+  base_pos:  [0.0, 0.0, 0.0]   # pelvis at world origin → targets are pelvis-relative
   base_quat: [1.0, 0.0, 0.0, 0.0]
   joints:
-    left_hip_pitch_joint:   -0.1
-    right_hip_pitch_joint:  -0.1
-    left_knee_joint:         0.3
-    right_knee_joint:        0.3
-    left_ankle_pitch_joint: -0.2
-    right_ankle_pitch_joint: -0.2
     left_shoulder_pitch_joint:  0.35
     right_shoulder_pitch_joint: 0.35
     left_shoulder_roll_joint:   0.18

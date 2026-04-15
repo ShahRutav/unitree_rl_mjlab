@@ -30,25 +30,25 @@ threshold_discard_sum:   6.2832  # discard if sum(|err|) across all joints > thi
 interp_duration: 2.0             # time (s) to interpolate from current to target
 
 # ---------- default hold pose (sent until the first ZMQ command arrives) ----------
-# Matches the g1_sitting.xml keyframe:
+# Matches the FixSit pose:
 #   legs: hip_pitch=-π/2 ≈ -1.5708, knee=70° ≈ 1.2217, everything else 0
-#   arms: all 0  (neutral sitting pose)
+#   arms: shoulder_pitch=0.35 (20°), shoulder_roll=±0.4363 (25°), elbow=0.87 (50°)
 # Order: left_leg(6) right_leg(6) waist(3) left_arm(7) right_arm(7)
 q_default: [
   -1.5708, 0.0, 0.0,  1.2217, 0.0, 0.0,   # left leg  (hip_pitch=-π/2, knee=70°)
   -1.5708, 0.0, 0.0,  1.2217, 0.0, 0.0,   # right leg
    0.0, 0.0, 0.0,                          # waist
-   0.0, 0.1745, 0.0, 0.0, 0.0, 0.0, 0.0,   # left arm  (shoulder_roll=10° away from body)
-   0.0,-0.1745, 0.0, 0.0, 0.0, 0.0, 0.0,  # right arm (shoulder_roll=10° away from body)
+   0.35, 0.4363, 0.0, 0.87, 0.0, 0.0, 0.0,  # left arm  (matches FixSit: shoulder_pitch=20°, shoulder_roll=25°, elbow=50°)
+   0.35,-0.4363, 0.0, 0.87, 0.0, 0.0, 0.0, # right arm (matches FixSit: shoulder_pitch=20°, shoulder_roll=-25°, elbow=50°)
 ]
 
 # ---------- PD gains (29 DOF: left-leg, right-leg, waist, left-arm, right-arm) ----------
 kp: [
   100, 100, 100, 150, 40, 40,
   100, 100, 100, 150, 40, 40,
-  200, 200, 400,
+  400, 400, 400,
   40, 40, 40, 40, 40, 40, 40,
-  40, 40, 40, 80, 40, 40, 40,
+  80, 80, 80, 80, 80, 80, 80,
 ]
 kd: [
   2, 2, 2, 4, 2, 2,

@@ -101,6 +101,9 @@ class IKConfig:
     # If a joint is absent, the model's jnt_range is used (if limited), else ±inf.
     # Either bound may be None to fall back to the model limit for that side.
     joint_limits: dict[str, tuple] = field(default_factory=dict)
+    # Joints pinned to exact values and excluded from Jacobian updates.
+    # {joint_name: value_rad}
+    locked_joints: dict[str, float] = field(default_factory=dict)
 
     # ── default frozen-leg angles (standing pose with locked knees) ──────────
     _DEFAULT_FROZEN_LEGS: dict[str, float] = field(default_factory=lambda: {
@@ -168,6 +171,11 @@ class IKConfig:
         base_quat = np.array(init_cfg.get("base_quat", [1.0, 0.0, 0.0, 0.0]), dtype=float)
         initial_joints = {k: float(v) for k, v in init_cfg.get("joints", {}).items()}
 
+        # Locked joints: {joint_name: value_rad} — excluded from Jacobian, pinned exactly.
+        locked_joints: dict[str, float] = {
+            k: float(v) for k, v in (cfg.get("locked_joints") or {}).items()
+        }
+
         # Solver params
         solver_cfg = cfg.get("solver", {})
 
@@ -185,6 +193,7 @@ class IKConfig:
             freeze_legs=freeze_legs,
             frozen_leg_joints=frozen_leg_joints,
             joint_limits=joint_limits,
+            locked_joints=locked_joints,
         )
 
 
@@ -321,6 +330,20 @@ class IKSolver:
         # Pre-resolve body IDs for the targets defined in config
         self._config_body_ids = self._resolve_body_ids(config.targets)
 
+        # Remove locked joints from the active list so they are excluded from
+        # Jacobian updates.  The effective active list is stored on the config copy.
+        effective_active = [j for j in config.active_joints
+                            if j not in config.locked_joints]
+        config.active_joints = effective_active
+
+        # Pre-resolve qpos addresses for locked joints and store target values.
+        self._locked_qpos_adrs: np.ndarray = self._resolve_qpos_adrs(
+            list(config.locked_joints.keys())
+        )
+        self._locked_values: np.ndarray = np.array(
+            list(config.locked_joints.values()), dtype=float
+        )
+
         # Pre-resolve DOF ids and qpos addresses for active joints
         self.dof_ids = self._resolve_dof_ids(config.active_joints)
         self._active_qpos_adrs = self._resolve_qpos_adrs(config.active_joints)
@@ -402,6 +425,11 @@ class IKSolver:
         for qadr, (lo, hi) in zip(self._active_qpos_adrs, self._limits):
             self.data.qpos[qadr] = np.clip(self.data.qpos[qadr], lo, hi)
 
+    def _pin_locked_joints(self) -> None:
+        """Force locked joints to their exact pinned values."""
+        for qadr, val in zip(self._locked_qpos_adrs, self._locked_values):
+            self.data.qpos[qadr] = val
+
     def _set_initial_pose(self) -> None:
         """Reset data.qpos to the configured initial pose."""
         self.data.qpos[:] = 0.0
@@ -476,9 +504,12 @@ class IKSolver:
 
         if warm_start is not None:
             self.data.qpos[:] = warm_start
+            self._pin_locked_joints()
             mujoco.mj_forward(self.model, self.data)
         else:
             self._set_initial_pose()
+            self._pin_locked_joints()
+            mujoco.mj_forward(self.model, self.data)
 
         converged  = False
         iterations = 0
@@ -507,6 +538,7 @@ class IKSolver:
             dv[self.dof_ids] = dq
             mujoco.mj_integratePos(self.model, self.data.qpos, dv, 1.0)
             self._clamp_to_limits()
+            self._pin_locked_joints()
             mujoco.mj_forward(self.model, self.data)
 
         if not converged and self.verbose:
