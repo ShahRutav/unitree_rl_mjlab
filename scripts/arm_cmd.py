@@ -340,12 +340,17 @@ def main():
                 except (KeyError, json.JSONDecodeError, ValueError) as e:
                     print(f"[arm_cmd] WARN: malformed command — {e}")
 
-            # 4. Gravity compensation
+            # 4. Gravity compensation (upper body only — waist + arms, indices 12+)
             if gc is not None and q_current is not None:
                 gravity_offset = gc.compute(q_current)
 
-            # 5. Build outgoing command
-            q_sent = [q_desired[i] + gravity_offset[i] for i in range(29)]
+            # 5. Build outgoing command.
+            # Legs (indices 0-11) are always held at q_default — no gravity comp,
+            # no command override — so they stay at the FixSit target and don't drift.
+            q_sent = [
+                q_default[i] if i < 12 else q_desired[i] + gravity_offset[i]
+                for i in range(29)
+            ]
 
             # 5b. Send hand commands
             if hand_ctrl is not None:

@@ -19,11 +19,11 @@ zmq_poll_sleep_ms: 1     # sleep between non-blocking polls (ms); keeps CPU usag
 # ---------- debug ----------
 disable_discard: false   # set to true to skip all DISCARD checks — every command becomes
                           # DIRECT or INTERPOLATE; useful when debugging pose mismatches
-disable_interp:  true    # set to true to skip interpolation — commands go directly to target
+disable_interp:  false    # set to true to skip interpolation — commands go directly to target
                           # regardless of error magnitude; use with caution on hardware
 
 # ---------- safety thresholds ----------
-threshold_direct: 0.1            # max L-inf error (rad) below which we send directly
+threshold_direct: 0.2618         # max L-inf error (rad) below which we send directly (~15°)
 threshold_discard_indiv: 3.1416  # discard if any single joint error > this (rad, default π = 180°)
 threshold_discard_sum:   6.2832  # discard if sum(|err|) across all joints > this (rad, default 2π = 360°)
                                   # commands not discarded and outside threshold_direct are interpolated
