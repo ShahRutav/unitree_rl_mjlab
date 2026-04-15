@@ -7,7 +7,7 @@ Streams a slow circular trajectory via
 to arm_cmd.py on port 5557.  Circle is traced in the Y-Z plane around a center point.
 
 Flags:
-    --center X Y Z     Circle center (default: 0.32 -0.25 0.95; x=0.32 reduces self-collision)
+    --center X Y Z     Circle center (default: 0.32 -0.25 0.15; x=0.32 reduces self-collision)
     --radius           Circle radius in metres (default: 0.08)
     --period           Seconds for one full circle (default: 8.0)
     --hz               Publish rate in Hz (default: 20)

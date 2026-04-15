@@ -54,12 +54,12 @@ public:
             motor.dq()  = motor.tau() = 0;
         }
 
-        // 2. Seed the hold pose: lower body (legs, indices 0-11) from current
-        //    sensor readings so the robot doesn't move on entry; upper body
-        //    (waist + arms, indices 12+) from q_default.
+        // 2. Seed the hold pose from q_default (matches the FixSit target exactly).
+        //    Do NOT seed legs from the actual sensor readings: on real hardware
+        //    gravity causes a steady-state error in FixSit (actual != target),
+        //    so seeding from actual would zero the restoring PD torque and cause
+        //    the legs to drift under gravity on entry.
         q_hold_ = q_default_;
-        for (int i = 0; i < 12 && i < static_cast<int>(q_hold_.size()); ++i)
-            q_hold_[i] = lowstate->msg_.motor_state()[i].q();
 
         // 3. Reset state
         in_interp_ = false;
