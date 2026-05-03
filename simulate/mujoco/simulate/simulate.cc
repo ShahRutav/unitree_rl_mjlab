@@ -2755,6 +2755,8 @@ void Simulate::RenderLoop() {
   // init abstract visualization
   mjv_defaultCamera(&this->cam);
   mjv_defaultOption(&this->opt);
+  this->opt.frame = mjFRAME_SITE;
+  this->opt.sitegroup[5] = 1;  // g1 model defaults all sites to group 5
   InitializeProfiler(this);
   InitializeSensor(this);
 

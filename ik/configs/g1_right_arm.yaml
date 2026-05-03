@@ -30,6 +30,8 @@ robot:
     right_knee_joint:        1.2217
     right_ankle_pitch_joint: 0.0
     right_ankle_roll_joint:  0.0
+    waist_pitch_joint:       0.0
+      # waist_roll_joint:        0.0
 
 # ── Target frames ─────────────────────────────────────────────────────────────
 # Each target names a body in the MuJoCo model and the desired world-frame pose.
@@ -64,7 +66,7 @@ joints:
   active:
     - waist_yaw_joint
     - waist_roll_joint
-    - waist_pitch_joint
+      # - waist_pitch_joint
     - right_shoulder_pitch_joint
     - right_shoulder_roll_joint
     - right_shoulder_yaw_joint

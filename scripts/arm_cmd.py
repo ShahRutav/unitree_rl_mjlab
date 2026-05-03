@@ -54,6 +54,9 @@ CONFIG_PATH = os.path.join(REPO_ROOT, "deploy", "robots", "g1", "config", "joint
 XML_PATH    = os.path.join(REPO_ROOT, "src", "assets", "robots",
                            "unitree_g1", "xmls", "g1_sitting.xml")
 
+FEEDBACK_TIMEOUT_S = 2.0   # seconds without feedback → warn about JointCmd mode
+WARN_COOLDOWN_S    = 5.0   # min gap between repeated warnings
+
 # ---------------------------------------------------------------------------
 # Inspire Hand (DDS via dfx_inspire_service — rt/inspire/cmd)
 # ---------------------------------------------------------------------------
@@ -219,11 +222,18 @@ def main():
     ik_solver = None
     ik_cfg    = None
     body_map  = {}   # target name → TargetFrame (from config)
+    # frozen_q: index → value derived from IK config's frozen_leg_joints.
+    # Used to initialise q_desired and to pin those indices in q_sent.
+    frozen_q: dict[int, float] = {}
     if not args.no_ik:
         from ik.ik_solver import IKConfig, IKSolver  # type: ignore[reportMissingImports]
         ik_cfg    = IKConfig.from_yaml(args.ik_config)
         ik_solver = IKSolver(ik_cfg)
         body_map  = {t.name: t for t in ik_cfg.targets}
+        for jname, val in ik_cfg.frozen_leg_joints.items():
+            idx = MUJOCO_JOINT_TO_IDX.get(jname)
+            if idx is not None:
+                frozen_q[idx] = val
 
     # ── ZMQ sockets ──────────────────────────────────────────────────────────
     ctx = zmq.Context()
@@ -267,20 +277,35 @@ def main():
     period    = 1.0 / args.hz
     next_t    = time.monotonic()
     q_desired = q_default[:]
+    for idx, val in frozen_q.items():
+        q_desired[idx] = val
     gravity_offset = [0.0] * 29
     q_current = None
     warm_start = None
     hand_desired = [1.0] * 12  # fully open; [R0..R5, L0..L5], range 0.0-1.0
+    last_fb_time     = None   # monotonic time of last received feedback; None = never received
+    last_mode_warn_t = 0.0
 
     try:
         while True:
+            now = time.monotonic()
+
             # 1. Drain feedback → update q_current
             raw_fb = drain_latest(fb_sock)
             if raw_fb is not None:
                 try:
-                    q_current = json.loads(raw_fb)["q_current"]
+                    q_current    = json.loads(raw_fb)["q_current"]
+                    last_fb_time = now
                 except (KeyError, json.JSONDecodeError):
                     pass
+            else:
+                if (last_fb_time is not None
+                        and now - last_fb_time > FEEDBACK_TIMEOUT_S
+                        and now - last_mode_warn_t > WARN_COOLDOWN_S):
+                    print(f"\033[93m[arm_cmd] WARN: no feedback for {now - last_fb_time:.1f}s — "
+                          "C++ controller is likely NOT in JointCmd mode "
+                          "(activate with keyboard '4' or joystick LT+B)\033[0m")
+                    last_mode_warn_t = now
 
             # 2. Drain in_socket → take latest command
             raw_cmd = drain_latest(in_sock)
@@ -350,10 +375,11 @@ def main():
                 gravity_offset = gc.compute(q_current)
 
             # 5. Build outgoing command.
-            # Legs (indices 0-11) are always held at q_default — no gravity comp,
-            # no command override — so they stay at the FixSit target and don't drift.
+            # Frozen joints (legs + any frozen upper-body joints from IK config) are
+            # pinned to their frozen_q values — no gravity comp, no command override.
+            # All other upper-body joints get gravity compensation applied.
             q_sent = [
-                q_default[i] if i < 12 else q_desired[i] + gravity_offset[i]
+                frozen_q[i] if i in frozen_q else q_desired[i] + gravity_offset[i]
                 for i in range(29)
             ]
 
@@ -366,7 +392,7 @@ def main():
 
             # 7. Rate-limit sleep
             next_t += period
-            sleep_s = next_t - time.monotonic()
+            sleep_s = next_t - now
             if sleep_s > 0:
                 time.sleep(sleep_s)
 

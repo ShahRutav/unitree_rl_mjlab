@@ -120,6 +120,14 @@ public:
                 switch (mode)
                 {
                     case CmdMode::DIRECT:
+                        // Don't abort an active ramp when q_current has gotten within
+                        // threshold_direct of the ramp's own target — that's a sensor
+                        // reading racing ahead of the ramp, not a new command. Switching
+                        // immediately would jump the commanded position from the current
+                        // ramp value to q_new (up to threshold_direct gap) and cause a jerk.
+                        if (in_interp_ && max_err(q_target_, q_new) <= controller_.threshold_direct) {
+                            break;
+                        }
                         q_hold_    = q_new;
                         in_interp_ = false;
                         t_interp_  = 0.0f;

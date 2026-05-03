@@ -300,6 +300,17 @@ class JointErrorPlotter:
                 result[JOINT_NAMES[j]] = list(g["err_bufs"][bi])
         return result
 
+    def reset_buffers(self):
+        """Clear all rolling buffers and redraw blank axes (e.g. to start a fresh recording window)."""
+        for g in self._groups:
+            for buf in g["t_bufs"]:
+                buf.clear()
+            for buf in g["err_bufs"]:
+                buf.clear()
+        for ln in self._all_lines:
+            ln.set_data([], [])
+        self.fig.canvas.draw_idle()
+
     def close(self):
         """Close the CSV file (if open).  ZMQ cleanup is the caller's responsibility."""
         if self._csv_file is not None:

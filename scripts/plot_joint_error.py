@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 import time
 
@@ -78,6 +79,40 @@ def main():
     )
     if args.csv:
         print(f"[plot_joint_error] CSV     : {args.csv}")
+
+    # Keyboard recording  (s = start/reset, e = stop+save) -------------------
+    _recording = [False]   # list so the closure can mutate it
+
+    _TMP_DIR = "./tmp"
+
+    def _next_save_path() -> str:
+        os.makedirs(_TMP_DIR, exist_ok=True)
+        i = 0
+        while os.path.exists(os.path.join(_TMP_DIR, f"joint_error_{i:03d}.png")):
+            i += 1
+        return os.path.join(_TMP_DIR, f"joint_error_{i:03d}.png")
+
+    _BASE_TITLE = "Joint Tracking Error  (q_current − q_target)"
+
+    def on_key(event):
+        if event.key == "r":
+            _recording[0] = True
+            plotter.reset_buffers()
+            plotter.fig.suptitle(f"{_BASE_TITLE}  [● REC]", fontsize=11, color="red")
+            plotter.fig.canvas.draw_idle()
+            print("[plot_joint_error] Recording started — press 'e' to stop and save")
+        elif event.key == "e":
+            if not _recording[0]:
+                return
+            _recording[0] = False
+            save_path = _next_save_path()
+            plotter.fig.savefig(save_path, dpi=150, bbox_inches="tight")
+            plotter.fig.suptitle(_BASE_TITLE, fontsize=11, color="black")
+            plotter.fig.canvas.draw_idle()
+            print(f"[plot_joint_error] Saved: {save_path}")
+
+    plotter.fig.canvas.mpl_connect("key_press_event", on_key)
+    print("[plot_joint_error] Keys    : 'r' start recording (clears plot)  |  'e' stop + save PNG")
 
     # ZMQ subscriber ---------------------------------------------------------
     ctx = zmq.Context()

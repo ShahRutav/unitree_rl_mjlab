@@ -44,16 +44,26 @@ q_default: [
 
 # ---------- PD gains (29 DOF: left-leg, right-leg, waist, left-arm, right-arm) ----------
 kp: [
-  100, 100, 100, 150, 40, 40,
-  100, 100, 100, 150, 40, 40,
-  400, 400, 400,
+  # [0-5]   left leg:  hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll
+  400, 100, 100, 150, 40, 40,
+  # [6-11]  right leg: hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll
+  400, 100, 100, 150, 40, 40,
+  # [12-14] waist:     yaw, roll, pitch
+  400, 600, 600,
+  # [15-21] left arm:  shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
   40, 40, 40, 40, 40, 40, 40,
-  80, 80, 80, 80, 80, 80, 80,
+  # [22-28] right arm: shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
+  200, 200, 200, 200, 80, 80, 80,
 ]
 kd: [
+  # [0-5]   left leg:  hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll
   2, 2, 2, 4, 2, 2,
+  # [6-11]  right leg: hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll
   2, 2, 2, 4, 2, 2,
+  # [12-14] waist:     yaw, roll, pitch
   5, 5, 5,
-  10, 10, 10, 10, 10, 10, 10,
-  10, 10, 10, 10, 10, 10, 10,
+  # [15-21] left arm:  shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
+  5, 5, 5, 5, 5, 5, 5,
+  # [22-28] right arm: shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
+  5, 5, 5, 5, 5, 5, 5,
 ]
