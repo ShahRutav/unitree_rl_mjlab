@@ -25,7 +25,7 @@ disable_interp:  false    # set to true to skip interpolation — commands go di
 # ---------- safety thresholds ----------
 threshold_direct: 0.2618         # max L-inf error (rad) below which we send directly (~15°)
 threshold_discard_indiv: 3.1416  # discard if any single joint error > this (rad, default π = 180°)
-threshold_discard_sum:   6.2832  # discard if sum(|err|) across all joints > this (rad, default 2π = 360°)
+threshold_discard_sum:   9.4248  # discard if sum(|err|) across all joints > this (rad, 3π = 540°)
                                   # commands not discarded and outside threshold_direct are interpolated
 interp_duration: 2.0             # time (s) to interpolate from current to target
 
