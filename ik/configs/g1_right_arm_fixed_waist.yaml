@@ -1,0 +1,77 @@
+# IK config — G1 right arm, waist FIXED (right arm only, 7 DOF)
+#
+# All three waist joints (yaw, roll, pitch) are frozen at 0°.
+# Only the right shoulder/elbow/wrist joints are active.
+#
+# Usage:
+#   python scripts/arm_cmd.py --ik-config ik/configs/g1_right_arm_fixed_waist.yaml
+#   python ik/ik_runner.py ik/configs/g1_right_arm_fixed_waist.yaml --viewer
+
+robot:
+  xml: src/assets/robots/unitree_g1/xmls/g1.xml
+
+  freeze_legs: true
+  frozen_leg_joints:
+    left_hip_pitch_joint:   -1.5708
+    left_hip_roll_joint:     0.0
+    left_hip_yaw_joint:      0.0
+    left_knee_joint:         1.2217
+    left_ankle_pitch_joint:  0.0
+    left_ankle_roll_joint:   0.0
+    right_hip_pitch_joint:  -1.5708
+    right_hip_roll_joint:    0.0
+    right_hip_yaw_joint:     0.0
+    right_knee_joint:        1.2217
+    right_ankle_pitch_joint: 0.0
+    right_ankle_roll_joint:  0.0
+    waist_pitch_joint:       0.0
+    waist_yaw_joint:         0.0
+    waist_roll_joint:        0.0
+
+targets:
+  - name: right_eef
+    body: right_wrist_yaw_link
+    position: [0.4, -0.3, 0.8]
+    orientation: [1.0, 0.0, 0.0, 0.0]
+    pos_weight: 1.0
+    ori_weight: 0.5
+
+  - name: right_eef_offset
+    body: right_eef_offset
+    position: [0.43, -0.3, 0.83]
+
+joints:
+  active:
+    - right_shoulder_pitch_joint
+    - right_shoulder_roll_joint
+    - right_shoulder_yaw_joint
+    - right_elbow_joint
+    - right_wrist_roll_joint
+    - right_wrist_pitch_joint
+    - right_wrist_yaw_joint
+
+  limits:
+    right_shoulder_pitch_joint:  [null, null]
+    right_shoulder_roll_joint:   [null, null]
+    right_shoulder_yaw_joint:    [null, null]
+    right_elbow_joint:           [null, null]
+    right_wrist_roll_joint:      [null, null]
+    right_wrist_pitch_joint:     [null, null]
+    right_wrist_yaw_joint:       [null, null]
+
+initial_pose:
+  base_pos:  [0.0, 0.0, 0.0]
+  base_quat: [1.0, 0.0, 0.0, 0.0]
+  joints:
+    left_shoulder_pitch_joint:  0.35
+    right_shoulder_pitch_joint: 0.35
+    left_shoulder_roll_joint:   0.18
+    right_shoulder_roll_joint: -0.18
+    left_elbow_joint:   0.87
+    right_elbow_joint:  0.87
+
+solver:
+  max_iter:  200
+  tolerance: 1.0e-3
+  damping:   0.05
+  max_dq:    0.5

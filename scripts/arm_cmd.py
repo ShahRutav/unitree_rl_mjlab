@@ -235,6 +235,21 @@ def main():
             if idx is not None:
                 frozen_q[idx] = val
 
+    # ── Passive joint indices (non-frozen, non-IK-active) ────────────────────
+    # When IK is enabled, these joints are held at their current position each
+    # tick to prevent the controller from driving them back to q_default.
+    ik_active_indices: set[int] = set()
+    if ik_solver is not None and ik_cfg is not None:
+        for jname in ik_cfg.active_joints:
+            idx = MUJOCO_JOINT_TO_IDX.get(jname)
+            if idx is not None:
+                ik_active_indices.add(idx)
+
+    passive_indices: list[int] = (
+        [i for i in range(29) if i not in frozen_q and i not in ik_active_indices]
+        if ik_solver is not None else []
+    )
+
     # ── ZMQ sockets ──────────────────────────────────────────────────────────
     ctx = zmq.Context()
 
@@ -263,6 +278,9 @@ def main():
         print(f"  IK active joints: {ik_cfg.active_joints}")
         print(f"  IK targets      : {list(body_map.keys())}")
     print(f"  Inspire hands   : {'DDS (' + args.hand_interface + ')' if hand_ctrl else 'disabled'}")
+    if passive_indices:
+        passive_names = [n for n, i in MUJOCO_JOINT_TO_IDX.items() if i in passive_indices]
+        print(f"  passive joints  : {passive_names} → held at q_current each tick")
     print("=" * 60)
     if hand_ctrl is None:
         print("\033[91m[arm_cmd] WARNING: hand commands will be DROPPED — pass --hand-interface <eth> to enable\033[0m")
@@ -306,6 +324,12 @@ def main():
                           "C++ controller is likely NOT in JointCmd mode "
                           "(activate with keyboard '4' or joystick LT+B)\033[0m")
                     last_mode_warn_t = now
+
+            # 1b. Hold passive joints at their current position so the
+            # controller doesn't drive them back to q_default.
+            if q_current is not None:
+                for i in passive_indices:
+                    q_desired[i] = q_current[i]
 
             # 2. Drain in_socket → take latest command
             raw_cmd = drain_latest(in_sock)

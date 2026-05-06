@@ -39,7 +39,7 @@ q_default: [
   -1.5708, 0.0, 0.0,  1.2217, 0.0, 0.0,   # right leg
    0.0, 0.0, 0.0,                          # waist
    0.35, 0.4363, 0.0, 0.87, 0.0, 0.0, 0.0,  # left arm  (matches FixSit: shoulder_pitch=20°, shoulder_roll=25°, elbow=50°)
-   0.35,-0.4363, 0.0, 0.87, 0.0, 0.0, 0.0, # right arm (matches FixSit: shoulder_pitch=20°, shoulder_roll=-25°, elbow=50°)
+   0.5,-0.4363, 0.0, 0.87, 0.0, 0.0, 0.0, # right arm (matches FixSit: shoulder_pitch=~29°, shoulder_roll=-25°, elbow=50°)
 ]
 
 # ---------- PD gains (29 DOF: left-leg, right-leg, waist, left-arm, right-arm) ----------
