@@ -16,6 +16,10 @@ zmq_rcvtimeo_ms: 100     # ZMQ receive timeout (ms); used by the background thre
 zmq_poll_sleep_ms: 1     # sleep between non-blocking polls (ms); keeps CPU usage low
                           # while still reacting to new commands quickly
 
+# ---------- gravity compensation ----------
+gravity_comp: false           # set to false to disable model-based gravity compensation
+                              # (can also be enabled per-run with --gravity-comp CLI flag)
+
 # ---------- debug ----------
 disable_discard: false   # set to true to skip all DISCARD checks — every command becomes
                           # DIRECT or INTERPOLATE; useful when debugging pose mismatches
@@ -23,7 +27,7 @@ disable_interp:  false    # set to true to skip interpolation — commands go di
                           # regardless of error magnitude; use with caution on hardware
 
 # ---------- safety thresholds ----------
-threshold_direct: 0.2618         # max L-inf error (rad) below which we send directly (~15°)
+threshold_direct: 0.2618             # max L-inf error (rad) below which we send directly (~5.7°)
 threshold_discard_indiv: 3.1416  # discard if any single joint error > this (rad, default π = 180°)
 threshold_discard_sum:   9.4248  # discard if sum(|err|) across all joints > this (rad, 3π = 540°)
                                   # commands not discarded and outside threshold_direct are interpolated
@@ -39,7 +43,23 @@ q_default: [
   -1.5708, 0.0, 0.0,  1.2217, 0.0, 0.0,   # right leg
    0.0, 0.0, 0.0,                          # waist
    0.35, 0.4363, 0.0, 0.87, 0.0, 0.0, 0.0,  # left arm  (matches FixSit: shoulder_pitch=20°, shoulder_roll=25°, elbow=50°)
-   0.5,-0.4363, 0.0, 0.87, 0.0, 0.0, 0.0, # right arm (matches FixSit: shoulder_pitch=~29°, shoulder_roll=-25°, elbow=50°)
+   0.5,-0.4363,-0.3491, 0.87, 0.0, 0.0, 0.0, # right arm (matches FixSit: shoulder_pitch=~29°, shoulder_roll=-25°, shoulder_yaw=-20°, elbow=50°)
+]
+
+# ---------- per-joint torque clamp (Nm) ----------
+# arm_cmd.py clips q_sent so kp[i]*|q_sent[i]-q_current[i]| <= max_torque[i].
+# Values match g1_sitting.xml ctrlrange. Remove or set to [] to disable.
+max_torque: [
+  # [0-5]   left leg:  hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll
+  88, 139, 88, 139, 50, 50,
+  # [6-11]  right leg: hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll
+  88, 139, 88, 139, 25, 25,
+  # [12-14] waist:     yaw, roll, pitch
+  88, 20, 20,
+  # [15-21] left arm:  shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
+  20, 20, 20, 20, 3, 3, 3,
+  # [22-28] right arm: shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
+  20, 20, 20, 20, 3, 3, 3,
 ]
 
 # ---------- PD gains (29 DOF: left-leg, right-leg, waist, left-arm, right-arm) ----------
@@ -49,7 +69,7 @@ kp: [
   # [6-11]  right leg: hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll
   400, 100, 100, 150, 40, 40,
   # [12-14] waist:     yaw, roll, pitch
-  400, 600, 600,
+  400, 400, 400,
   # [15-21] left arm:  shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
   40, 40, 40, 40, 40, 40, 40,
   # [22-28] right arm: shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
@@ -63,7 +83,7 @@ kd: [
   # [12-14] waist:     yaw, roll, pitch
   5, 5, 5,
   # [15-21] left arm:  shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
-  5, 5, 5, 5, 5, 5, 5,
+  10, 10, 10, 10, 10, 10, 10,
   # [22-28] right arm: shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
-  5, 5, 5, 5, 5, 5, 5,
+  10, 10, 10, 10, 10, 10, 10,
 ]

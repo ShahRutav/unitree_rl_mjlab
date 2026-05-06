@@ -284,8 +284,8 @@ def main():
                         help="[step] residual integrator gain (default: 0.05; 0=off)")
     parser.add_argument("--correction-clamp", type=float, default=0.3,
                         help="[step] max integrator correction in rad (default: 0.3)")
-    parser.add_argument("--no-gravity-comp", action="store_true",
-                        help="[step] disable model-based gravity compensation (default: enabled)")
+    parser.add_argument("--gravity-comp", action="store_true",
+                        help="[step] enable model-based gravity compensation (default: disabled)")
     # sine-only args
     parser.add_argument("--freq",     type=float, default=0.5,
                         help="[sine] oscillation frequency in Hz (default: 0.5)")
@@ -295,7 +295,10 @@ def main():
     args = parser.parse_args()
 
     joints    = MODES[args.mode]
-    q_default = load_q_default()
+    cfg       = yaml.safe_load(open(CONFIG_PATH))
+    q_default = list(map(float, cfg["q_default"]))
+    assert len(q_default) == 29, f"q_default has {len(q_default)} joints, expected 29"
+    use_gc    = cfg.get("gravity_comp", False) or args.gravity_comp
 
     ctx    = zmq.Context()
     socket = ctx.socket(zmq.PUB)
@@ -312,8 +315,7 @@ def main():
             fb_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
             gc = None
-            if not args.no_gravity_comp:
-                cfg = yaml.safe_load(open(CONFIG_PATH))
+            if use_gc:
                 gc = GravityCompensator(XML_PATH, cfg["kp"])
                 print(f"[send_joint_cmd] gravity comp: enabled (xml={XML_PATH})")
 

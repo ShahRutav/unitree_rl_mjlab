@@ -35,6 +35,27 @@ public:
             knee_threshold_ = sc["knee_threshold"].as<float>();
         if (sc && sc["hip_pitch_threshold"])
             hip_threshold_ = sc["hip_pitch_threshold"].as<float>();
+
+        // Load PD gains once in the constructor (not as static locals in enter())
+        // so passive joint overrides can be applied cleanly.
+        kp_ = param::config["FSM"]["FixSit"]["kp"].as<std::vector<float>>();
+        kd_ = param::config["FSM"]["FixSit"]["kd"].as<std::vector<float>>();
+
+        // Apply passive joint overrides (kp=kd=0) from passive_joints.yaml if present.
+        auto passive_path = param::config_dir / "passive_joints.yaml";
+        if (std::filesystem::exists(passive_path)) {
+            auto pcfg = YAML::LoadFile(passive_path.string());
+            if (pcfg["passive_joints"]) {
+                auto indices = pcfg["passive_joints"].as<std::vector<int>>();
+                for (int idx : indices) {
+                    if (idx >= 0 && idx < static_cast<int>(kp_.size())) {
+                        kp_[idx] = 0.0f;
+                        kd_[idx] = 0.0f;
+                    }
+                }
+                spdlog::info("[FixSit] passive_joints.yaml: {} joints set to kp=kd=0", indices.size());
+            }
+        }
     }
 
     void enter()
@@ -93,13 +114,11 @@ public:
         rejected_   = false;
         warn_ticks_ = 0;
 
-        static auto kp = param::config["FSM"]["FixSit"]["kp"].as<std::vector<float>>();
-        static auto kd = param::config["FSM"]["FixSit"]["kd"].as<std::vector<float>>();
-        for (int i = 0; i < static_cast<int>(kp.size()); ++i)
+        for (int i = 0; i < static_cast<int>(kp_.size()); ++i)
         {
             auto& m  = lowcmd->msg_.motor_cmd()[i];
-            m.kp()  = kp[i];
-            m.kd()  = kd[i];
+            m.kp()  = kp_[i];
+            m.kd()  = kd_[i];
             m.dq()  = 0.0f;
             m.tau() = 0.0f;
         }
@@ -133,7 +152,9 @@ public:
         );
         auto q = linear_interpolate(t, ts_, qs_);
         for (int i = 0; i < static_cast<int>(q.size()); ++i)
+        {
             lowcmd->msg_.motor_cmd()[i].q() = q[i];
+        }
     }
 
 private:
@@ -142,6 +163,8 @@ private:
     double  t0_;
     std::vector<float>              ts_;
     std::vector<std::vector<float>> qs_;
+    std::vector<float>              kp_;
+    std::vector<float>              kd_;
 
     // Standing-check thresholds (rad).
     // Reject if avg_knee < knee_threshold_ AND avg_hip_pitch > hip_threshold_.

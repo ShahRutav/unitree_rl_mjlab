@@ -342,6 +342,10 @@
     <joint joint1="right_knee_joint"      polycoef="1.2217 0 0 0 0"/>
     <joint joint1="right_ankle_pitch_joint" polycoef="0 0 0 0 0"/>
     <joint joint1="right_ankle_roll_joint"  polycoef="0 0 0 0 0"/>
+
+    <!-- Waist roll and pitch physically locked at 0 -->
+    <joint joint1="waist_roll_joint"  polycoef="0 0 0 0 0"/>
+    <joint joint1="waist_pitch_joint" polycoef="0 0 0 0 0"/>
   </equality>
 
   <sensor>

@@ -25,12 +25,31 @@ public:
         kp_ = cfg["kp"].as<std::vector<float>>();
         kd_ = cfg["kd"].as<std::vector<float>>();
 
+        // Apply passive joint overrides (kp=kd=0) from passive_joints.yaml if present.
+        // Zeroing here means enter() naturally writes 0 gains for those joints.
+        auto passive_path = param::config_dir / "passive_joints.yaml";
+        if (std::filesystem::exists(passive_path)) {
+            auto pcfg = YAML::LoadFile(passive_path.string());
+            if (pcfg["passive_joints"]) {
+                auto indices = pcfg["passive_joints"].as<std::vector<int>>();
+                for (int idx : indices) {
+                    if (idx >= 0 && idx < static_cast<int>(kp_.size())) {
+                        kp_[idx] = 0.0f;
+                        kd_[idx] = 0.0f;
+                    }
+                }
+                spdlog::info("[JointCmd] passive_joints.yaml: {} joints set to kp=kd=0", indices.size());
+            }
+        }
+
         threshold_direct_         = cfg["threshold_direct"]         ? cfg["threshold_direct"].as<float>()         : 0.1f;
         threshold_discard_indiv_  = cfg["threshold_discard_indiv"]  ? cfg["threshold_discard_indiv"].as<float>()  : static_cast<float>(M_PI);
         threshold_discard_sum_    = cfg["threshold_discard_sum"]    ? cfg["threshold_discard_sum"].as<float>()    : 2.0f * static_cast<float>(M_PI);
         disable_discard_          = cfg["disable_discard"]          ? cfg["disable_discard"].as<bool>()           : false;
         disable_interp_           = cfg["disable_interp"]           ? cfg["disable_interp"].as<bool>()            : false;
         interp_duration_          = cfg["interp_duration"]          ? cfg["interp_duration"].as<float>()          : 2.0f;
+        if (cfg["max_torque"])
+            max_torque_ = cfg["max_torque"].as<std::vector<float>>();
         zmq_address_       = cfg["zmq_address"]        ? cfg["zmq_address"].as<std::string>()  : "tcp://localhost:5555";
         zmq_rcvtimeo_ms_   = cfg["zmq_rcvtimeo_ms"]   ? cfg["zmq_rcvtimeo_ms"].as<int>()      : 100;
         zmq_poll_sleep_ms_ = cfg["zmq_poll_sleep_ms"]  ? cfg["zmq_poll_sleep_ms"].as<int>()    : 1;
@@ -67,6 +86,7 @@ public:
         tick_                = 0;
         last_discard_log_tick_ = 0;
         last_direct_log_tick_  = 0;
+        last_clamp_log_tick_   = 0;
 
         // 4. Create receiver
         receiver_ = std::make_unique<JointCmdReceiver>(zmq_address_, zmq_rcvtimeo_ms_, zmq_poll_sleep_ms_);
@@ -146,8 +166,38 @@ public:
                             q_target_  = q_new;
                             in_interp_ = true;
                             t_interp_  = 0.0f;
-                            spdlog::info("[JointCmd][interp] started: max_err={:.4f} rad, duration={:.1f}s",
-                                         err, controller_.interp_duration);
+                            // Adaptive duration: start from configured interp_duration, then
+                            // double until the first interpolation step (dt_ / T per joint)
+                            // implies kp[i] × step ≤ max_torque[i] for every joint.
+                            float adaptive_duration = interp_duration_;
+                            int   doublings         = 0;
+                            if (!max_torque_.empty()) {
+                                bool fits = false;
+                                while (!fits) {
+                                    fits = true;
+                                    for (std::size_t i = 0; i < q_current.size(); ++i) {
+                                        if (kp_[i] <= 0.0f || max_torque_[i] <= 0.0f) continue;
+                                        float step_torque = kp_[i]
+                                            * std::fabs(q_new[i] - q_current[i])
+                                            * dt_ / adaptive_duration;
+                                        if (step_torque > max_torque_[i]) {
+                                            adaptive_duration *= 2.0f;
+                                            ++doublings;
+                                            fits = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            controller_.interp_duration = adaptive_duration;
+                            spdlog::info("[JointCmd][interp] started: max_err={:.4f} rad, {}duration={:.2f}s{} ({})",
+                                         err,
+                                         doublings > 0 ? "\033[31m" : "",
+                                         adaptive_duration,
+                                         doublings > 0 ? "\033[0m" : "",
+                                         doublings == 0 ? "no adaptation" :
+                                             std::to_string(doublings) + "x doubled from "
+                                             + std::to_string(interp_duration_) + "s");
                         }
                         break;
 
@@ -168,18 +218,15 @@ public:
             // silently ignore wrong-size messages
         }
 
-        // Step 2 / Step 3: send command
+        // Step 2 / Step 3: build final command, then write to motors
+        std::vector<float> q_cmd;
         if (in_interp_)
         {
             t_interp_ += dt_;
-            auto q_cmd = controller_.interp_step(q_start_, q_target_, t_interp_);
-
-            for (int i = 0; i < static_cast<int>(q_cmd.size()); ++i)
-                lowcmd->msg_.motor_cmd()[i].q() = q_cmd[i];
+            q_cmd = controller_.interp_step(q_start_, q_target_, t_interp_);
 
             if (t_interp_ >= controller_.interp_duration)
             {
-                // interpolation finished
                 q_hold_    = q_target_;
                 in_interp_ = false;
                 spdlog::info("[JointCmd][interp] done");
@@ -192,9 +239,43 @@ public:
         }
         else
         {
-            for (int i = 0; i < static_cast<int>(q_hold_.size()); ++i)
-                lowcmd->msg_.motor_cmd()[i].q() = q_hold_[i];
+            q_cmd = q_hold_;
         }
+
+        // Torque clamp: clip q_cmd so kp[i]*|q_cmd[i]-q_current[i]| <= max_torque_[i].
+        // Applied every tick at 1 kHz — last line of defence before hardware.
+        if (!max_torque_.empty())
+        {
+            int   worst_joint      = -1;
+            float worst_torque     = 0.0f;
+            float worst_max_torque = 0.0f;
+            for (int i = 0; i < static_cast<int>(q_cmd.size()); ++i)
+            {
+                if (kp_[i] <= 0.0f || max_torque_[i] <= 0.0f) continue;
+                float max_delta = max_torque_[i] / kp_[i];
+                float delta     = q_cmd[i] - q_current[i];
+                if (std::fabs(delta) > max_delta)
+                {
+                    float implied = kp_[i] * std::fabs(delta);
+                    if (implied > worst_torque) {
+                        worst_torque     = implied;
+                        worst_max_torque = max_torque_[i];
+                        worst_joint      = i;
+                    }
+                    q_cmd[i] = q_current[i] + std::copysign(max_delta, delta);
+                }
+            }
+            if (worst_joint >= 0 && tick_ - last_clamp_log_tick_ >= 1000)
+            {
+                spdlog::warn("[JointCmd] \033[31mTORQUE CLAMP: joint {}={} {:.1f}Nm > {:.1f}Nm limit\033[0m",
+                             worst_joint, joint_name(worst_joint),
+                             worst_torque, worst_max_torque);
+                last_clamp_log_tick_ = tick_;
+            }
+        }
+
+        for (int i = 0; i < static_cast<int>(q_cmd.size()); ++i)
+            lowcmd->msg_.motor_cmd()[i].q() = q_cmd[i];
 
         // Publish feedback + plot at the configured decimation rate
         if (tick_ % static_cast<uint32_t>(feedback_decimation_) == 0)
@@ -296,6 +377,7 @@ private:
     std::vector<float> kp_;
     std::vector<float> kd_;
     std::vector<float> q_default_;      // hold pose until first ZMQ command
+    std::vector<float> max_torque_;     // per-joint torque clamp (Nm); empty = disabled
     float       threshold_direct_;
     float       threshold_discard_indiv_;
     float       threshold_discard_sum_;
@@ -318,6 +400,7 @@ private:
     uint32_t tick_               = 0;
     uint32_t last_discard_log_tick_ = 0;
     uint32_t last_direct_log_tick_  = 0;
+    uint32_t last_clamp_log_tick_   = 0;
 
     // Feedback publisher (arm_cmd.py reads q_current from here)
     bool        enable_feedback_pub_  = false;

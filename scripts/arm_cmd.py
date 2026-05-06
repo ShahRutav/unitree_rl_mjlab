@@ -24,7 +24,6 @@ Usage
 -----
   python3 scripts/arm_cmd.py
   python3 scripts/arm_cmd.py --ik-config ik/configs/g1_right_arm.yaml --hz 50
-  python3 scripts/arm_cmd.py --no-gravity-comp
   python3 scripts/arm_cmd.py --no-ik
   python3 scripts/arm_cmd.py --hand-interface eth0
 """
@@ -50,7 +49,8 @@ REPO_ROOT  = os.path.dirname(SCRIPT_DIR)
 # Make ik/ importable
 sys.path.insert(0, REPO_ROOT)
 
-CONFIG_PATH = os.path.join(REPO_ROOT, "deploy", "robots", "g1", "config", "joint_cmd.yaml")
+CONFIG_PATH        = os.path.join(REPO_ROOT, "deploy", "robots", "g1", "config", "joint_cmd.yaml")
+PASSIVE_JOINTS_PATH = os.path.join(REPO_ROOT, "deploy", "robots", "g1", "config", "passive_joints.yaml")
 XML_PATH    = os.path.join(REPO_ROOT, "src", "assets", "robots",
                            "unitree_g1", "xmls", "g1_sitting.xml")
 
@@ -152,7 +152,8 @@ class GravityCompensator:
         """Return per-joint position offsets that cancel gravity-induced steady-state error."""
         self.data.qpos[:] = q_current
         self._mujoco.mj_forward(self.model, self.data)
-        return [float(self.data.qfrc_bias[i]) / self.kp[i] for i in range(29)]
+        return [float(self.data.qfrc_bias[i]) / self.kp[i] if self.kp[i] != 0.0 else 0.0
+                for i in range(29)]
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +198,6 @@ def main():
                         help="ZMQ feedback address (default: tcp://localhost:5556)")
     parser.add_argument("--hz",          type=float, default=50.0,
                         help="Control loop rate in Hz (default: 50.0)")
-    parser.add_argument("--no-gravity-comp", action="store_true",
-                        help="Disable model-based gravity compensation")
     parser.add_argument("--no-ik",       action="store_true",
                         help="Disable IK (cartesian commands will be rejected)")
     parser.add_argument("--hand-interface", default=None,
@@ -215,8 +214,15 @@ def main():
 
     # ── Gravity compensator ──────────────────────────────────────────────────
     gc = None
-    if not args.no_gravity_comp:
-        gc = GravityCompensator(XML_PATH, cfg_yaml["kp"])
+    gravity_comp_enabled = cfg_yaml.get("gravity_comp", True)
+    if gravity_comp_enabled:
+        kp_for_gc = list(cfg_yaml["kp"])
+        if os.path.exists(PASSIVE_JOINTS_PATH):
+            pj = yaml.safe_load(open(PASSIVE_JOINTS_PATH))
+            for idx in pj.get("passive_joints", []):
+                if 0 <= idx < len(kp_for_gc):
+                    kp_for_gc[idx] = 0.0
+        gc = GravityCompensator(XML_PATH, kp_for_gc)
 
     # ── IK solver ────────────────────────────────────────────────────────────
     ik_solver = None
@@ -235,20 +241,14 @@ def main():
             if idx is not None:
                 frozen_q[idx] = val
 
-    # ── Passive joint indices (non-frozen, non-IK-active) ────────────────────
-    # When IK is enabled, these joints are held at their current position each
-    # tick to prevent the controller from driving them back to q_default.
-    ik_active_indices: set[int] = set()
-    if ik_solver is not None and ik_cfg is not None:
-        for jname in ik_cfg.active_joints:
-            idx = MUJOCO_JOINT_TO_IDX.get(jname)
-            if idx is not None:
-                ik_active_indices.add(idx)
-
-    passive_indices: list[int] = (
-        [i for i in range(29) if i not in frozen_q and i not in ik_active_indices]
-        if ik_solver is not None else []
-    )
+    # ── Passive joint indices ─────────────────────────────────────────────────
+    # Loaded from passive_joints.yaml — single source of truth shared with the
+    # C++ states (JointCmd, FixSit).  These joints are held at q_current each
+    # tick so the controller never drives them back to q_default.
+    passive_indices: list[int] = []
+    if os.path.exists(PASSIVE_JOINTS_PATH):
+        _pj = yaml.safe_load(open(PASSIVE_JOINTS_PATH))
+        passive_indices = [idx for idx in _pj.get("passive_joints", []) if 0 <= idx < 29]
 
     # ── ZMQ sockets ──────────────────────────────────────────────────────────
     ctx = zmq.Context()
