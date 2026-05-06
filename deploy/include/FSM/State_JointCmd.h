@@ -64,6 +64,7 @@ public:
         // 3. Reset state
         in_interp_ = false;
         t_interp_  = 0.0f;
+        v_start_.assign(kp_.size(), 0.0f);
         tick_                = 0;
         last_discard_log_tick_ = 0;
         last_direct_log_tick_  = 0;
@@ -142,6 +143,14 @@ public:
                         // This lets a sender stream the same pose at high rate without
                         // perpetually resetting a 2-second interpolation.
                         if (!in_interp_ || max_err(q_target_, q_new) > controller_.threshold_direct) {
+                            // Capture the outgoing velocity so the new segment starts
+                            // at the same speed — eliminates the velocity discontinuity
+                            // (jerk) that a cold restart from zero would cause.
+                            if (in_interp_)
+                                v_start_ = controller_.interp_velocity(q_start_, v_start_, q_target_, t_interp_);
+                            else
+                                v_start_.assign(kp_.size(), 0.0f);
+
                             q_start_   = q_current;
                             q_target_  = q_new;
                             in_interp_ = true;
@@ -172,7 +181,7 @@ public:
         if (in_interp_)
         {
             t_interp_ += dt_;
-            auto q_cmd = controller_.interp_step(q_start_, q_target_, t_interp_);
+            auto q_cmd = controller_.interp_step(q_start_, v_start_, q_target_, t_interp_);
 
             for (int i = 0; i < static_cast<int>(q_cmd.size()); ++i)
                 lowcmd->msg_.motor_cmd()[i].q() = q_cmd[i];
@@ -312,6 +321,7 @@ private:
 
     std::vector<float> q_hold_;    // last successfully applied command
     std::vector<float> q_start_;   // start of current interpolation
+    std::vector<float> v_start_;   // ramp velocity at the start of current segment (rad/s)
     std::vector<float> q_target_;  // target of current interpolation
     float    t_interp_  = 0.0f;   // current interpolation time (seconds)
     bool     in_interp_ = false;   // are we currently interpolating?

@@ -50,16 +50,27 @@ struct JointCmdController {
         return CmdMode::INTERPOLATE;
     }
 
-    // Return interpolated joint positions at time t along the straight-line
-    // path from q_start (t=0) to q_target (t=interp_duration).
-    // Values are clamped to the endpoints by linear_interpolate for t outside
-    // [0, interp_duration].
+    // Return interpolated joint positions at time t.
+    // Uses a cubic Hermite spline so that successive segments are
+    // velocity-continuous: pass v_start = velocity of the outgoing ramp at
+    // the moment of restart; zero on the very first segment.
+    // The segment arrives at q_target with zero velocity (v_end = 0).
     std::vector<float> interp_step(const std::vector<float>& q_start,
+                                   const std::vector<float>& v_start,
                                    const std::vector<float>& q_target,
                                    float t) const
     {
-        return linear_interpolate(t,
-                                  {0.0f, interp_duration},
-                                  {q_start, q_target});
+        const std::vector<float> v_zero(q_start.size(), 0.0f);
+        return cubic_hermite(t, interp_duration, q_start, v_start, q_target, v_zero);
+    }
+
+    // Velocity of the current ramp at time t (used to seed the next segment).
+    std::vector<float> interp_velocity(const std::vector<float>& q_start,
+                                       const std::vector<float>& v_start,
+                                       const std::vector<float>& q_target,
+                                       float t) const
+    {
+        const std::vector<float> v_zero(q_start.size(), 0.0f);
+        return cubic_hermite_velocity(t, interp_duration, q_start, v_start, q_target, v_zero);
     }
 };

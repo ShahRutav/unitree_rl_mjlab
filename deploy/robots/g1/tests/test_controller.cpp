@@ -102,22 +102,24 @@ TEST(JointCmdControllerTest, ClassifyIdentical)
 }
 
 // ---------------------------------------------------------------------------
-// interp_step() tests
+// interp_step() tests — cubic Hermite, v_start / v_end both zero unless noted
 // ---------------------------------------------------------------------------
 
-// 7. t = 0  =>  returns q_start
+// Helper: zero-velocity vector of given length.
+static std::vector<float> zeros(std::size_t n) { return std::vector<float>(n, 0.0f); }
+
+// 7. t = 0  =>  returns q_start (regardless of v_start)
 TEST(JointCmdControllerTest, InterpStepAtZero)
 {
     auto ctrl = make_ctrl();
-    std::vector<float> q_start = {1.0f, 2.0f, 3.0f};
+    std::vector<float> q_start  = {1.0f, 2.0f, 3.0f};
     std::vector<float> q_target = {4.0f, 5.0f, 6.0f};
 
-    auto result = ctrl.interp_step(q_start, q_target, 0.0f);
+    auto result = ctrl.interp_step(q_start, zeros(3), q_target, 0.0f);
 
     ASSERT_EQ(result.size(), q_start.size());
-    for (std::size_t i = 0; i < result.size(); ++i) {
+    for (std::size_t i = 0; i < result.size(); ++i)
         EXPECT_NEAR(result[i], q_start[i], 1e-5f);
-    }
 }
 
 // 8. t = interp_duration  =>  returns q_target
@@ -127,23 +129,24 @@ TEST(JointCmdControllerTest, InterpStepAtEnd)
     std::vector<float> q_start  = {1.0f, 2.0f, 3.0f};
     std::vector<float> q_target = {4.0f, 5.0f, 6.0f};
 
-    auto result = ctrl.interp_step(q_start, q_target, ctrl.interp_duration);
+    auto result = ctrl.interp_step(q_start, zeros(3), q_target, ctrl.interp_duration);
 
     ASSERT_EQ(result.size(), q_target.size());
-    for (std::size_t i = 0; i < result.size(); ++i) {
+    for (std::size_t i = 0; i < result.size(); ++i)
         EXPECT_NEAR(result[i], q_target[i], 1e-5f);
-    }
 }
 
-// 9. t = interp_duration / 2  =>  returns midpoint
+// 9. t = interp_duration / 2, v_start = v_end = 0  =>  returns midpoint.
+// With both velocities zero the h10/h11 terms vanish and the cubic Hermite
+// reduces to a linear blend at tau = 0.5.
 TEST(JointCmdControllerTest, InterpStepMidpoint)
 {
     auto ctrl = make_ctrl();
     std::vector<float> q_start  = {0.0f, 0.0f, 0.0f};
     std::vector<float> q_target = {2.0f, 4.0f, -2.0f};
-    float t_mid = ctrl.interp_duration / 2.0f;  // 1.0 s
+    float t_mid = ctrl.interp_duration / 2.0f;  // 1.0 s  =>  tau = 0.5
 
-    auto result = ctrl.interp_step(q_start, q_target, t_mid);
+    auto result = ctrl.interp_step(q_start, zeros(3), q_target, t_mid);
 
     ASSERT_EQ(result.size(), q_target.size());
     for (std::size_t i = 0; i < result.size(); ++i) {
@@ -158,12 +161,33 @@ TEST(JointCmdControllerTest, InterpStepBeyondEnd)
     auto ctrl = make_ctrl();
     std::vector<float> q_start  = {1.0f, 2.0f, 3.0f};
     std::vector<float> q_target = {4.0f, 5.0f, 6.0f};
-    float t_beyond = ctrl.interp_duration + 10.0f;  // way past the end
+    float t_beyond = ctrl.interp_duration + 10.0f;
 
-    auto result = ctrl.interp_step(q_start, q_target, t_beyond);
+    auto result = ctrl.interp_step(q_start, zeros(3), q_target, t_beyond);
 
     ASSERT_EQ(result.size(), q_target.size());
-    for (std::size_t i = 0; i < result.size(); ++i) {
+    for (std::size_t i = 0; i < result.size(); ++i)
         EXPECT_NEAR(result[i], q_target[i], 1e-5f);
-    }
+}
+
+// 11. Velocity continuity: interp_velocity at the restart point equals v_start
+// of the new segment, so the commanded position slope is continuous.
+TEST(JointCmdControllerTest, VelocityContinuityAtRestart)
+{
+    auto ctrl = make_ctrl();
+    std::vector<float> q_start  = {0.0f, 0.0f};
+    std::vector<float> q_target = {2.0f, 2.0f};
+    float t_restart = 0.5f;  // restart mid-ramp
+
+    // Velocity of old ramp at the restart moment
+    auto v_at_restart = ctrl.interp_velocity(q_start, zeros(2), q_target, t_restart);
+
+    // New ramp starting from that velocity — velocity at t=0 must equal v_at_restart
+    std::vector<float> q_start2  = {1.0f, 1.0f};  // some mid-ramp position
+    std::vector<float> q_target2 = {3.0f, 3.0f};
+    auto v_new_start = ctrl.interp_velocity(q_start2, v_at_restart, q_target2, 0.0f);
+
+    // At t=0, cubic_hermite_velocity returns v_start exactly
+    for (std::size_t i = 0; i < v_at_restart.size(); ++i)
+        EXPECT_NEAR(v_new_start[i], v_at_restart[i], 1e-5f);
 }
