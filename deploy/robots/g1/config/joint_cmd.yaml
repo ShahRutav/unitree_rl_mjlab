@@ -33,6 +33,14 @@ threshold_discard_sum:   9.4248  # discard if sum(|err|) across all joints > thi
                                   # commands not discarded and outside threshold_direct are interpolated
 interp_duration: 0.5             # minimum interpolation time (s); adaptive T extends this when needed
 
+# ---------- velocity feedforward ----------
+# Sender's expected publish rate (Hz). Used to compute dq_des feedforward as
+#   dq_ff = (q_new - q_policy_prev) / (1 / policy_hz)
+# which removes the Kd-term braking that otherwise fights motion between policy
+# ticks (the q_des staircase). Must match the actual sender rate; if messages
+# stop arriving, dq_ff is zeroed after 1.5 * policy_dt to avoid steady drift.
+policy_hz: 10
+
 # ---------- default hold pose (sent until the first ZMQ command arrives) ----------
 # Matches the FixSit pose:
 #   legs: hip_pitch=-π/2 ≈ -1.5708, knee=70° ≈ 1.2217, everything else 0
@@ -93,5 +101,5 @@ kd: [
   # [15-21] left arm:  shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
   10, 10, 10, 10, 10, 10, 10,
   # [22-28] right arm: shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
-  10, 10, 10, 10, 10, 10, 10,
+  5, 5, 5, 5, 10, 10, 10,
 ]

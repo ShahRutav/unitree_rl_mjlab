@@ -54,7 +54,7 @@ joints:
     right_shoulder_pitch_joint:  [null, null]
     right_shoulder_roll_joint:   [null, null]
     right_shoulder_yaw_joint:    [null, null]
-    right_elbow_joint:           [null, null]
+    right_elbow_joint:           [-0.3491, null]   # allow 20° of hyperextension; model floor is -60°
     right_wrist_roll_joint:      [null, null]
     right_wrist_pitch_joint:     [null, null]
     right_wrist_yaw_joint:       [null, null]

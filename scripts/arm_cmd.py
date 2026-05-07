@@ -216,8 +216,10 @@ def main():
                         help="ZMQ bind address for controller (default: tcp://*:5555)")
     parser.add_argument("--feedback",    default="tcp://localhost:5556",
                         help="ZMQ feedback address (default: tcp://localhost:5556)")
-    parser.add_argument("--hz",          type=float, default=50.0,
-                        help="Control loop rate in Hz (default: 50.0)")
+    parser.add_argument("--hz",          type=float, default=None,
+                        help="Control loop rate in Hz. Defaults to joint_cmd.yaml's policy_hz "
+                             "so each outgoing message carries one real policy step (required "
+                             "for the C++ JointCmd's dq_ff feedforward to be correct).")
     parser.add_argument("--no-ik",       action="store_true",
                         help="Disable IK (cartesian commands will be rejected)")
     parser.add_argument("--hand-interface", default=None,
@@ -231,6 +233,19 @@ def main():
     locked_joints: dict[int, float] = {
         int(k): float(v) for k, v in cfg_yaml.get("locked_joints", {}).items()
     }
+
+    # arm_cmd must publish at the same rate as the C++ JointCmd's policy_hz so each
+    # outgoing message advances by one real upstream step. If arm_cmd runs faster,
+    # most messages carry only gravity-comp wobble and the C++ dq_ff feedforward
+    # (which divides Δq by 1/policy_hz) degenerates into a 10 Hz pulse train.
+    policy_hz = float(cfg_yaml["policy_hz"])
+    if args.hz is None:
+        args.hz = policy_hz
+    else:
+        assert abs(args.hz - policy_hz) < 1e-6, (
+            f"--hz={args.hz} disagrees with policy_hz={policy_hz} in {CONFIG_PATH}; "
+            f"arm_cmd must publish at policy_hz so the C++ dq_ff feedforward is correct."
+        )
 
     # ── Inspire hands (DDS) ──────────────────────────────────────────────────
     hand_ctrl = InspireHandDDS(args.hand_interface) if args.hand_interface else None

@@ -56,6 +56,9 @@ public:
             spdlog::info("[JointCmd] locked_joints: {} joints pinned", locked_joints_.size());
         }
 
+        float policy_hz           = cfg["policy_hz"] ? cfg["policy_hz"].as<float>() : 10.0f;
+        policy_dt_                = (policy_hz > 0.0f) ? (1.0f / policy_hz) : 0.1f;
+
         threshold_direct_         = cfg["threshold_direct"]         ? cfg["threshold_direct"].as<float>()         : 0.1f;
         threshold_discard_indiv_  = cfg["threshold_discard_indiv"]  ? cfg["threshold_discard_indiv"].as<float>()  : static_cast<float>(M_PI);
         threshold_discard_sum_    = cfg["threshold_discard_sum"]    ? cfg["threshold_discard_sum"].as<float>()    : 2.0f * static_cast<float>(M_PI);
@@ -100,6 +103,19 @@ public:
         tick_                = 0;
         last_discard_log_tick_ = 0;
         last_direct_log_tick_  = 0;
+
+        // Lagged-ramp state — q_ramp_start_ doesn't matter until begin_ramp() runs;
+        // initialize to q_default_ to match q_hold_ so any pre-message current_q_des()
+        // call returns a sane vector.
+        q_ramp_start_     = q_default_;
+        dq_ff_.assign(kp_.size(), 0.0f);
+        have_prev_policy_ = false;
+        last_policy_tick_ = 0;
+
+        // Timing watchdog
+        have_msg_           = false;
+        last_msg_tick_      = 0;
+        last_late_log_tick_ = 0;
 
         // Seed locked-joint entry ramp from current hardware position so the
         // transition from FixSit doesn't produce a torque step.
@@ -164,6 +180,23 @@ public:
         {
             if (q_new.size() == kp_.size())
             {
+                // Timing watchdog: incoming command rate should match policy_hz so the
+                // ramp slope (Δq / policy_dt) reflects one real period of motion. If
+                // the gap is outside ±50% of policy_dt, something upstream is jittering
+                // (sender stall, scheduler stutter, or arm_cmd --hz mismatch).
+                if (have_msg_) {
+                    const float gap = (tick_ - last_msg_tick_) * dt_;
+                    if (std::fabs(gap - policy_dt_) > 0.5f * policy_dt_ &&
+                        tick_ - last_late_log_tick_ >= 1000) {
+                        spdlog::warn("[JointCmd] message gap {:.3f}s vs policy_dt {:.3f}s "
+                                     "(Δ={:+.3f}s) — dq_ff scaling will be off",
+                                     gap, policy_dt_, gap - policy_dt_);
+                        last_late_log_tick_ = tick_;
+                    }
+                }
+                last_msg_tick_ = tick_;
+                have_msg_      = true;
+
                 CmdMode mode = controller_.classify(q_current, q_new);
                 float err    = max_err(q_current, q_new);
 
@@ -178,7 +211,7 @@ public:
                         if (in_interp_ && controller_.active_max_err(q_target_, q_new) <= controller_.threshold_direct) {
                             break;
                         }
-                        q_hold_    = q_new;
+                        begin_ramp(q_new);
                         in_interp_ = false;
                         t_interp_  = 0.0f;
                         if (tick_ - last_direct_log_tick_ >= 1000) {
@@ -255,6 +288,18 @@ public:
                              t_interp_, controller_.interp_duration);
             }
         }
+        else if (have_prev_policy_)
+        {
+            // Lagged linear ramp: q_des moves from q_ramp_start_ → q_hold_ over policy_dt,
+            // then saturates at q_hold_. Slope of this ramp matches dq_ff_ by construction,
+            // so q_des and dq_des describe the same motion (no Kd·v/Kp settling offset, no
+            // wrong-segment-slope overshoot during decel).
+            const float age   = (tick_ - last_policy_tick_) * dt_;
+            const float alpha = std::clamp(age / policy_dt_, 0.0f, 1.0f);
+            q_cmd.resize(q_hold_.size());
+            for (std::size_t i = 0; i < q_cmd.size(); ++i)
+                q_cmd[i] = q_ramp_start_[i] + alpha * (q_hold_[i] - q_ramp_start_[i]);
+        }
         else
         {
             q_cmd = q_hold_;
@@ -279,8 +324,21 @@ public:
                     q_cmd[idx] = val;
         }
 
-        for (int i = 0; i < static_cast<int>(q_cmd.size()); ++i)
+        // Velocity feedforward: hold the last policy-derived dq_ff while it's fresh,
+        // then decay to zero so a stalled sender doesn't leave a steady-state offset.
+        // Suppressed during the safety ramp (in_interp_) and on locked joints.
+        // FF is on only while the lagged ramp is still progressing (α < 1, equivalently
+        // age < policy_dt). Once we've reached q_hold_, dq_des = 0 — same condition as
+        // q_cmd saturating at q_hold_, so q_des and dq_des go flat together.
+        const float ff_age = (tick_ - last_policy_tick_) * dt_;
+        const bool  ff_active = have_prev_policy_ && !in_interp_ && ff_age < policy_dt_;
+
+        for (int i = 0; i < static_cast<int>(q_cmd.size()); ++i) {
             lowcmd->msg_.motor_cmd()[i].q() = q_cmd[i];
+            float v_ff = ff_active ? dq_ff_[i] : 0.0f;
+            if (locked_joints_.count(i)) v_ff = 0.0f;
+            lowcmd->msg_.motor_cmd()[i].dq() = v_ff;
+        }
 
         // Publish feedback + plot at the configured decimation rate
         if (tick_ % static_cast<uint32_t>(feedback_decimation_) == 0)
@@ -312,6 +370,42 @@ public:
     }
 
 private:
+    // Compute the current commanded q_des at this tick.
+    //   - During the safety ramp (in_interp_): the 2 s linear interp from q_start_ → q_target_.
+    //   - Before the first policy message: q_hold_ (= q_default_).
+    //   - Otherwise: linear ramp from q_ramp_start_ → q_hold_ over policy_dt, saturating at q_hold_.
+    // Called from begin_ramp() so a new message arriving mid-ramp anchors the next ramp's start
+    // to the current q_des, keeping the commanded trajectory C0-continuous under sender jitter.
+    std::vector<float> current_q_des() const
+    {
+        if (in_interp_)
+            return controller_.interp_step(q_start_, q_target_, t_interp_);
+        if (!have_prev_policy_)
+            return q_hold_;
+        const float age   = (tick_ - last_policy_tick_) * dt_;
+        const float alpha = std::clamp(age / policy_dt_, 0.0f, 1.0f);
+        std::vector<float> q(q_hold_.size());
+        for (std::size_t i = 0; i < q.size(); ++i)
+            q[i] = q_ramp_start_[i] + alpha * (q_hold_[i] - q_ramp_start_[i]);
+        return q;
+    }
+
+    // Begin a new linear ramp of q_des from current q_des → q_new over policy_dt.
+    // dq_ff = (q_new - q_ramp_start) / policy_dt matches the ramp's slope exactly,
+    // so q_des and dq_des describe the same segment — no Kd·v/Kp settling offset
+    // and no wrong-segment-slope overshoot when the policy decelerates.
+    void begin_ramp(const std::vector<float>& q_new)
+    {
+        if (q_new.size() != q_hold_.size()) return;
+        q_ramp_start_ = current_q_des();
+        q_hold_       = q_new;
+        const float inv_dt = 1.0f / policy_dt_;
+        for (std::size_t i = 0; i < q_hold_.size(); ++i)
+            dq_ff_[i] = (q_hold_[i] - q_ramp_start_[i]) * inv_dt;
+        have_prev_policy_ = true;
+        last_policy_tick_ = tick_;
+    }
+
     // Serialize feedback as JSON string (no external dependency)
     static std::string make_feedback_json(uint32_t tick,
                                           const std::vector<float>& q_current,
@@ -388,6 +482,7 @@ private:
     std::map<int, float> locked_entry_q_start_;      // hardware position at enter() for entry ramp
     float                locked_entry_t_    = 0.0f;  // elapsed time into entry ramp
     bool                 locked_entry_done_ = true;  // true once ramp completes (or no locked joints)
+    float       policy_dt_ = 0.1f;     // 1 / policy_hz; used for dq_ff = Δq / policy_dt
     float       threshold_direct_;
     float       threshold_discard_indiv_;
     float       threshold_discard_sum_;
@@ -410,6 +505,19 @@ private:
     uint32_t tick_               = 0;
     uint32_t last_discard_log_tick_ = 0;
     uint32_t last_direct_log_tick_  = 0;
+
+    // Lagged-ramp state — see begin_ramp() / current_q_des().
+    // q_des ramps linearly from q_ramp_start_ → q_hold_ over policy_dt; dq_ff_ is the
+    // matching constant slope and is written to motor.dq() while ff_age < policy_dt.
+    std::vector<float> q_ramp_start_;      // q_des at the start of the current 100 ms segment
+    std::vector<float> dq_ff_;             // (q_hold_ - q_ramp_start_) / policy_dt, written to motor.dq()
+    bool               have_prev_policy_ = false;
+    uint32_t           last_policy_tick_ = 0;  // tick_ at which the current ramp began
+
+    // Timing watchdog — independent of the ramp anchor; ticks on every received command.
+    bool     have_msg_           = false;
+    uint32_t last_msg_tick_      = 0;
+    uint32_t last_late_log_tick_ = 0;
 
     // Feedback publisher (arm_cmd.py reads q_current from here)
     bool        enable_feedback_pub_  = false;
