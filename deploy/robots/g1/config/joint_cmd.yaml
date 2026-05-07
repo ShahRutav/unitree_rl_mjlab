@@ -17,7 +17,7 @@ zmq_poll_sleep_ms: 1     # sleep between non-blocking polls (ms); keeps CPU usag
                           # while still reacting to new commands quickly
 
 # ---------- gravity compensation ----------
-gravity_comp: false           # set to false to disable model-based gravity compensation
+gravity_comp: true            # set to false to disable model-based gravity compensation
                               # (can also be enabled per-run with --gravity-comp CLI flag)
 
 # ---------- debug ----------
@@ -31,7 +31,7 @@ threshold_direct: 0.2618             # max L-inf error (rad) below which we send
 threshold_discard_indiv: 3.1416  # discard if any single joint error > this (rad, default π = 180°)
 threshold_discard_sum:   9.4248  # discard if sum(|err|) across all joints > this (rad, 3π = 540°)
                                   # commands not discarded and outside threshold_direct are interpolated
-interp_duration: 2.0             # time (s) to interpolate from current to target
+interp_duration: 0.5             # minimum interpolation time (s); adaptive T extends this when needed
 
 # ---------- default hold pose (sent until the first ZMQ command arrives) ----------
 # Matches the FixSit pose:
@@ -39,12 +39,20 @@ interp_duration: 2.0             # time (s) to interpolate from current to targe
 #   arms: shoulder_pitch=0.35 (20°), shoulder_roll=±0.4363 (25°), elbow=0.87 (50°)
 # Order: left_leg(6) right_leg(6) waist(3) left_arm(7) right_arm(7)
 q_default: [
-  -1.5708, 0.0, 0.0,  1.2217, 0.0, 0.0,   # left leg  (hip_pitch=-π/2, knee=70°)
-  -1.5708, 0.0, 0.0,  1.2217, 0.0, 0.0,   # right leg
+  -1.3963, 0.0, 0.0,  1.2217, 0.0, 0.0,   # left leg  (hip_pitch=-100°, knee=70°)
+  -1.3963, 0.0, 0.0,  1.2217, 0.0, 0.0,   # right leg (hip_pitch=-100°, knee=70°)
    0.0, 0.0, 0.0,                          # waist
    0.35, 0.4363, 0.0, 0.87, 0.0, 0.0, 0.0,  # left arm  (matches FixSit: shoulder_pitch=20°, shoulder_roll=25°, elbow=50°)
-   0.5,-0.4363,-0.3491, 0.87, 0.0, 0.0, 0.0, # right arm (matches FixSit: shoulder_pitch=~29°, shoulder_roll=-25°, shoulder_yaw=-20°, elbow=50°)
+   0.6,-0.4363,-0.3491, 0.87, 0.0, 0.0, 0.0, # right arm (shoulder_pitch=~34°, shoulder_roll=-25°, shoulder_yaw=-20°, elbow=50°)
 ]
+
+# ---------- locked joints (index: value, rad) ----------
+# These joints are pinned at the given value every tick — both in joint_cmd (C++)
+# and in arm_cmd.py. They are also excluded from the DIRECT/INTERPOLATE/DISCARD
+# classification so passive-joint drift never triggers a ramp on them.
+locked_joints:
+  0:  -1.3963   # L_hip_pitch  (-100°)
+  6:  -1.3963   # R_hip_pitch  (-100°)
 
 # ---------- per-joint torque clamp (Nm) ----------
 # arm_cmd.py clips q_sent so kp[i]*|q_sent[i]-q_current[i]| <= max_torque[i].
@@ -57,9 +65,9 @@ max_torque: [
   # [12-14] waist:     yaw, roll, pitch
   88, 20, 20,
   # [15-21] left arm:  shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
-  20, 20, 20, 20, 3, 3, 3,
+  20, 20, 20, 5, 3, 3, 3,
   # [22-28] right arm: shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
-  20, 20, 20, 20, 3, 3, 3,
+  20, 20, 20, 5, 3, 3, 3,
 ]
 
 # ---------- PD gains (29 DOF: left-leg, right-leg, waist, left-arm, right-arm) ----------
@@ -73,7 +81,7 @@ kp: [
   # [15-21] left arm:  shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
   40, 40, 40, 40, 40, 40, 40,
   # [22-28] right arm: shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
-  200, 200, 200, 200, 80, 80, 80,
+  80, 80, 80, 80, 80, 80, 80,
 ]
 kd: [
   # [0-5]   left leg:  hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll

@@ -168,6 +168,26 @@ def load_q_default() -> list:
     return list(map(float, q))
 
 
+def _qpos_from_q_current(ik_solver, ik_cfg, q_current: list) -> np.ndarray:
+    """Build a full IK qpos vector seeded with the live 29-DOF joint state.
+
+    The IK model has a free base joint (qpos[0:7]); we set it from the IK
+    config's base_pos / base_quat. The 29 controller joints are written into
+    their qpos addresses by name, so the IK starts from the actual robot pose
+    and picks the kinematic branch nearest to it.
+    """
+    import mujoco  # type: ignore[import-untyped]
+    qpos = np.zeros(ik_solver.model.nq)
+    if ik_solver.model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE:
+        qpos[0:3] = ik_cfg.base_pos
+        qpos[3:7] = ik_cfg.base_quat
+    for jname, idx in MUJOCO_JOINT_TO_IDX.items():
+        jid = mujoco.mj_name2id(ik_solver.model, mujoco.mjtObj.mjOBJ_JOINT, jname)
+        if jid >= 0:
+            qpos[ik_solver.model.jnt_qposadr[jid]] = q_current[idx]
+    return qpos
+
+
 def drain_latest(sock):  # -> str | None
     """Drain all pending messages from a NOBLOCK SUB socket; return the latest raw string."""
     latest = None
@@ -208,6 +228,9 @@ def main():
     # ── Load config ──────────────────────────────────────────────────────────
     cfg_yaml = yaml.safe_load(open(CONFIG_PATH))
     q_default = load_q_default()
+    locked_joints: dict[int, float] = {
+        int(k): float(v) for k, v in cfg_yaml.get("locked_joints", {}).items()
+    }
 
     # ── Inspire hands (DDS) ──────────────────────────────────────────────────
     hand_ctrl = InspireHandDDS(args.hand_interface) if args.hand_interface else None
@@ -281,6 +304,9 @@ def main():
     if passive_indices:
         passive_names = [n for n, i in MUJOCO_JOINT_TO_IDX.items() if i in passive_indices]
         print(f"  passive joints  : {passive_names} → held at q_current each tick")
+    if locked_joints:
+        locked_names = {n: locked_joints[i] for n, i in MUJOCO_JOINT_TO_IDX.items() if i in locked_joints}
+        print(f"  locked joints   : {locked_names} → pinned unconditionally")
     print("=" * 60)
     if hand_ctrl is None:
         print("\033[91m[arm_cmd] WARNING: hand commands will be DROPPED — pass --hand-interface <eth> to enable\033[0m")
@@ -372,8 +398,18 @@ def main():
                                         proto, position=np.array(val, dtype=float)
                                     ))
                             if ik_targets:
+                                # Re-anchor warm-start to live q_current on every
+                                # solve. Chaining from result.qpos drifts from
+                                # reality if the controller rejects a cmd
+                                # (e.g. C++ DISCARD): the IK keeps starting from
+                                # its own divergent pose and produces ever-larger
+                                # joint jumps. Anchoring to q_current keeps the
+                                # IK in the local kinematic branch.
+                                if q_current is not None:
+                                    if warm_start is None:
+                                        print("[arm_cmd] IK warm-started from live q_current")
+                                    warm_start = _qpos_from_q_current(ik_solver, ik_cfg, q_current)
                                 result = ik_solver.solve(targets=ik_targets, warm_start=warm_start)
-                                warm_start = result.qpos   # warm-start next call
                                 # Merge IK solution into q_desired
                                 for jname, angle in result.joint_angles.items():
                                     idx = MUJOCO_JOINT_TO_IDX.get(jname)
@@ -406,6 +442,11 @@ def main():
                 frozen_q[i] if i in frozen_q else q_desired[i] + gravity_offset[i]
                 for i in range(29)
             ]
+
+            # Locked joints override everything — no interpolation, no drift, no compromise.
+            for idx, val in locked_joints.items():
+                if 0 <= idx < 29:
+                    q_sent[idx] = val
 
             # 5b. Send hand commands
             if hand_ctrl is not None:

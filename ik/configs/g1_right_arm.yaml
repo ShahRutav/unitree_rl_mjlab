@@ -30,7 +30,7 @@ robot:
     right_knee_joint:        1.2217
     right_ankle_pitch_joint: 0.0
     right_ankle_roll_joint:  0.0
-    waist_pitch_joint:       0.0
+    # waist_pitch_joint:       0.0
       # waist_roll_joint:        0.0
 
 # ── Target frames ─────────────────────────────────────────────────────────────
@@ -46,13 +46,15 @@ targets:
     position: [0.4, -0.3, 0.8]
     orientation: [1.0, 0.0, 0.0, 0.0]   # identity — no rotation constraint
     pos_weight: 1.0
-    ori_weight: 0.5
+    ori_weight: 0.1
 
   # Offset frame: +3 cm X, +3 cm Z relative to right_eef body.
   # Change body here to update both IK target and visualizer tracking.
   - name: right_eef_offset
     body: right_eef_offset
     position: [0.43, -0.3, 0.83]        # placeholder; overridden at solve time
+    pos_weight: 1.0
+    ori_weight: 0.1
 
 # ── Active joints & limits ────────────────────────────────────────────────────
 # active : only these joints are updated by the IK solver.
@@ -65,7 +67,7 @@ targets:
 joints:
   active:
     - waist_yaw_joint
-    - waist_roll_joint
+    # - waist_roll_joint
       # - waist_pitch_joint
     - right_shoulder_pitch_joint
     - right_shoulder_roll_joint

@@ -7,6 +7,7 @@
 #include "JointCmdController.h"
 #include "JointCmdReceiver.h"
 #include <spdlog/spdlog.h>
+#include <map>
 #include <memory>
 #include <vector>
 #include <cmath>
@@ -36,10 +37,23 @@ public:
                     if (idx >= 0 && idx < static_cast<int>(kp_.size())) {
                         kp_[idx] = 0.0f;
                         kd_[idx] = 0.0f;
+                        passive_indices_.push_back(idx);
                     }
                 }
                 spdlog::info("[JointCmd] passive_joints.yaml: {} joints set to kp=kd=0", indices.size());
             }
+        }
+
+        // Load locked joints: pinned at a fixed value every tick regardless of incoming commands.
+        if (cfg["locked_joints"]) {
+            auto lj = cfg["locked_joints"];
+            for (auto it = lj.begin(); it != lj.end(); ++it) {
+                int   idx = it->first.as<int>();
+                float val = it->second.as<float>();
+                if (idx >= 0 && idx < static_cast<int>(kp_.size()))
+                    locked_joints_[idx] = val;
+            }
+            spdlog::info("[JointCmd] locked_joints: {} joints pinned", locked_joints_.size());
         }
 
         threshold_direct_         = cfg["threshold_direct"]         ? cfg["threshold_direct"].as<float>()         : 0.1f;
@@ -86,7 +100,15 @@ public:
         tick_                = 0;
         last_discard_log_tick_ = 0;
         last_direct_log_tick_  = 0;
-        last_clamp_log_tick_   = 0;
+
+        // Seed locked-joint entry ramp from current hardware position so the
+        // transition from FixSit doesn't produce a torque step.
+        locked_entry_q_start_.clear();
+        for (auto& [idx, val] : locked_joints_)
+            locked_entry_q_start_[idx] = lowstate->msg_.motor_state()[idx].q();
+        locked_entry_t_    = 0.0f;
+        locked_entry_done_ = false;
+        spdlog::info("[JointCmd] locked joints: entry ramp started ({:.2f}s)", interp_duration_);
 
         // 4. Create receiver
         receiver_ = std::make_unique<JointCmdReceiver>(zmq_address_, zmq_rcvtimeo_ms_, zmq_poll_sleep_ms_);
@@ -110,6 +132,14 @@ public:
         controller_.disable_discard          = disable_discard_;
         controller_.disable_interp           = disable_interp_;
         controller_.interp_duration          = interp_duration_;
+
+        // Passive and locked joints are excluded from classify()/active_max_err()
+        // so their drift never triggers INTERPOLATE on the active joints.
+        controller_.skip_joints.clear();
+        for (int idx : passive_indices_)
+            controller_.skip_joints.insert(idx);
+        for (auto& [idx, val] : locked_joints_)
+            controller_.skip_joints.insert(idx);
 
         if (disable_discard_)
             spdlog::warn("[JointCmd] DISCARD disabled — all commands will be interpolated regardless of error");
@@ -145,7 +175,7 @@ public:
                         // reading racing ahead of the ramp, not a new command. Switching
                         // immediately would jump the commanded position from the current
                         // ramp value to q_new (up to threshold_direct gap) and cause a jerk.
-                        if (in_interp_ && max_err(q_target_, q_new) <= controller_.threshold_direct) {
+                        if (in_interp_ && controller_.active_max_err(q_target_, q_new) <= controller_.threshold_direct) {
                             break;
                         }
                         q_hold_    = q_new;
@@ -158,46 +188,34 @@ public:
                         break;
 
                     case CmdMode::INTERPOLATE:
-                        // Only restart the ramp if the target has changed meaningfully.
-                        // This lets a sender stream the same pose at high rate without
-                        // perpetually resetting a 2-second interpolation.
-                        if (!in_interp_ || max_err(q_target_, q_new) > controller_.threshold_direct) {
+                        // Only restart the ramp if the active-joint target has changed
+                        // meaningfully. Uses active_max_err so passive/locked joint drift
+                        // does not perpetually reset a running interpolation.
+                        if (!in_interp_ || controller_.active_max_err(q_target_, q_new) > controller_.threshold_direct) {
                             q_start_   = q_current;
                             q_target_  = q_new;
                             in_interp_ = true;
                             t_interp_  = 0.0f;
-                            // Adaptive duration: start from configured interp_duration, then
-                            // double until the first interpolation step (dt_ / T per joint)
-                            // implies kp[i] × step ≤ max_torque[i] for every joint.
+                            // Adaptive duration: T = max(interp_duration_, max over joints of
+                            //   (kp*dt_ + kd) * delta / max_torque)
+                            // This ensures the first-step PD torque (spring + damping) stays
+                            // within max_torque for every joint.
                             float adaptive_duration = interp_duration_;
-                            int   doublings         = 0;
                             if (!max_torque_.empty()) {
-                                bool fits = false;
-                                while (!fits) {
-                                    fits = true;
-                                    for (std::size_t i = 0; i < q_current.size(); ++i) {
-                                        if (kp_[i] <= 0.0f || max_torque_[i] <= 0.0f) continue;
-                                        float step_torque = kp_[i]
-                                            * std::fabs(q_new[i] - q_current[i])
-                                            * dt_ / adaptive_duration;
-                                        if (step_torque > max_torque_[i]) {
-                                            adaptive_duration *= 2.0f;
-                                            ++doublings;
-                                            fits = false;
-                                            break;
-                                        }
-                                    }
+                                for (std::size_t i = 0; i < q_current.size(); ++i) {
+                                    if (max_torque_[i] <= 0.0f) continue;
+                                    float delta    = std::fabs(q_new[i] - q_current[i]);
+                                    float T_needed = (kp_[i] * dt_ + kd_[i]) * delta / max_torque_[i];
+                                    if (T_needed > adaptive_duration)
+                                        adaptive_duration = T_needed;
                                 }
                             }
                             controller_.interp_duration = adaptive_duration;
-                            spdlog::info("[JointCmd][interp] started: max_err={:.4f} rad, {}duration={:.2f}s{} ({})",
+                            spdlog::info("[JointCmd][interp] started: max_err={:.4f} rad, {}duration={:.2f}s{}",
                                          err,
-                                         doublings > 0 ? "\033[31m" : "",
+                                         adaptive_duration > interp_duration_ ? "\033[33m" : "",
                                          adaptive_duration,
-                                         doublings > 0 ? "\033[0m" : "",
-                                         doublings == 0 ? "no adaptation" :
-                                             std::to_string(doublings) + "x doubled from "
-                                             + std::to_string(interp_duration_) + "s");
+                                         adaptive_duration > interp_duration_ ? "\033[0m" : "");
                         }
                         break;
 
@@ -242,36 +260,23 @@ public:
             q_cmd = q_hold_;
         }
 
-        // Torque clamp: clip q_cmd so kp[i]*|q_cmd[i]-q_current[i]| <= max_torque_[i].
-        // Applied every tick at 1 kHz — last line of defence before hardware.
-        if (!max_torque_.empty())
-        {
-            int   worst_joint      = -1;
-            float worst_torque     = 0.0f;
-            float worst_max_torque = 0.0f;
-            for (int i = 0; i < static_cast<int>(q_cmd.size()); ++i)
-            {
-                if (kp_[i] <= 0.0f || max_torque_[i] <= 0.0f) continue;
-                float max_delta = max_torque_[i] / kp_[i];
-                float delta     = q_cmd[i] - q_current[i];
-                if (std::fabs(delta) > max_delta)
-                {
-                    float implied = kp_[i] * std::fabs(delta);
-                    if (implied > worst_torque) {
-                        worst_torque     = implied;
-                        worst_max_torque = max_torque_[i];
-                        worst_joint      = i;
-                    }
-                    q_cmd[i] = q_current[i] + std::copysign(max_delta, delta);
-                }
+
+        // Locked joints: ramp from entry position to locked value over interp_duration,
+        // then hard-pin forever. Runs after the torque clamp.
+        if (!locked_entry_done_) {
+            locked_entry_t_ += dt_;
+            float alpha = std::min(locked_entry_t_ / interp_duration_, 1.0f);
+            for (auto& [idx, val] : locked_joints_)
+                if (idx < static_cast<int>(q_cmd.size()))
+                    q_cmd[idx] = locked_entry_q_start_[idx] + alpha * (val - locked_entry_q_start_[idx]);
+            if (locked_entry_t_ >= interp_duration_) {
+                locked_entry_done_ = true;
+                spdlog::info("[JointCmd] locked joints: entry ramp done");
             }
-            if (worst_joint >= 0 && tick_ - last_clamp_log_tick_ >= 1000)
-            {
-                spdlog::warn("[JointCmd] \033[31mTORQUE CLAMP: joint {}={} {:.1f}Nm > {:.1f}Nm limit\033[0m",
-                             worst_joint, joint_name(worst_joint),
-                             worst_torque, worst_max_torque);
-                last_clamp_log_tick_ = tick_;
-            }
+        } else {
+            for (auto& [idx, val] : locked_joints_)
+                if (idx < static_cast<int>(q_cmd.size()))
+                    q_cmd[idx] = val;
         }
 
         for (int i = 0; i < static_cast<int>(q_cmd.size()); ++i)
@@ -374,10 +379,15 @@ private:
     }
 
     // Config (read from joint_cmd.yaml in constructor, used in enter())
-    std::vector<float> kp_;
-    std::vector<float> kd_;
-    std::vector<float> q_default_;      // hold pose until first ZMQ command
-    std::vector<float> max_torque_;     // per-joint torque clamp (Nm); empty = disabled
+    std::vector<float>   kp_;
+    std::vector<float>   kd_;
+    std::vector<float>   q_default_;      // hold pose until first ZMQ command
+    std::vector<float>   max_torque_;     // per-joint torque clamp (Nm); empty = disabled
+    std::vector<int>     passive_indices_;            // joints with kp=kd=0
+    std::map<int, float> locked_joints_;             // joints pinned at a fixed value every tick
+    std::map<int, float> locked_entry_q_start_;      // hardware position at enter() for entry ramp
+    float                locked_entry_t_    = 0.0f;  // elapsed time into entry ramp
+    bool                 locked_entry_done_ = true;  // true once ramp completes (or no locked joints)
     float       threshold_direct_;
     float       threshold_discard_indiv_;
     float       threshold_discard_sum_;
@@ -400,7 +410,6 @@ private:
     uint32_t tick_               = 0;
     uint32_t last_discard_log_tick_ = 0;
     uint32_t last_direct_log_tick_  = 0;
-    uint32_t last_clamp_log_tick_   = 0;
 
     // Feedback publisher (arm_cmd.py reads q_current from here)
     bool        enable_feedback_pub_  = false;
