@@ -39,7 +39,7 @@ interp_duration: 0.5             # minimum interpolation time (s); adaptive T ex
 # which removes the Kd-term braking that otherwise fights motion between policy
 # ticks (the q_des staircase). Must match the actual sender rate; if messages
 # stop arriving, dq_ff is zeroed after 1.5 * policy_dt to avoid steady drift.
-policy_hz: 10
+policy_hz: 5
 
 # ---------- default hold pose (sent until the first ZMQ command arrives) ----------
 # Matches the FixSit pose:
@@ -101,5 +101,5 @@ kd: [
   # [15-21] left arm:  shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
   10, 10, 10, 10, 10, 10, 10,
   # [22-28] right arm: shoulder_pitch, shoulder_roll, shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw
-  5, 5, 5, 5, 10, 10, 10,
+  5, 5, 5, 5, 5, 5, 5,
 ]

@@ -34,9 +34,10 @@ TEST(JointCmdReceiverTest, ParseValid29) {
     auto result = JointCmdReceiver::parse_message(json);
 
     ASSERT_TRUE(result.has_value());
-    ASSERT_EQ(result->size(), 29u);
-    EXPECT_NEAR((*result)[0],  0.1f, 1e-5f);
-    EXPECT_NEAR((*result)[28], 0.0f, 1e-5f);
+    ASSERT_EQ(result->q.size(), 29u);
+    EXPECT_NEAR(result->q[0],  0.1f, 1e-5f);
+    EXPECT_NEAR(result->q[28], 0.0f, 1e-5f);
+    EXPECT_TRUE(result->tau_ff.empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -47,9 +48,35 @@ TEST(JointCmdReceiverTest, ParseValidSmall) {
     auto result = JointCmdReceiver::parse_message(json);
 
     ASSERT_TRUE(result.has_value());
-    ASSERT_EQ(result->size(), 5u);
-    EXPECT_NEAR((*result)[0], 1.0f, 1e-5f);
-    EXPECT_NEAR((*result)[4], 5.0f, 1e-5f);
+    ASSERT_EQ(result->q.size(), 5u);
+    EXPECT_NEAR(result->q[0], 1.0f, 1e-5f);
+    EXPECT_NEAR(result->q[4], 5.0f, 1e-5f);
+}
+
+// ---------------------------------------------------------------------------
+// 2b. ParseWithTauFf — both q and tau_ff present, equal lengths
+// ---------------------------------------------------------------------------
+TEST(JointCmdReceiverTest, ParseWithTauFf) {
+    const std::string json =
+        R"({"q": [1.0, 2.0, 3.0], "tau_ff": [0.1, -0.2, 0.3]})";
+    auto result = JointCmdReceiver::parse_message(json);
+
+    ASSERT_TRUE(result.has_value());
+    ASSERT_EQ(result->q.size(), 3u);
+    ASSERT_EQ(result->tau_ff.size(), 3u);
+    EXPECT_NEAR(result->tau_ff[0],  0.1f, 1e-5f);
+    EXPECT_NEAR(result->tau_ff[1], -0.2f, 1e-5f);
+    EXPECT_NEAR(result->tau_ff[2],  0.3f, 1e-5f);
+}
+
+// ---------------------------------------------------------------------------
+// 2c. ParseTauFfLengthMismatch — tau_ff present but wrong length → nullopt
+// ---------------------------------------------------------------------------
+TEST(JointCmdReceiverTest, ParseTauFfLengthMismatch) {
+    const std::string json = R"({"q": [1.0, 2.0, 3.0], "tau_ff": [0.1, 0.2]})";
+    auto result = JointCmdReceiver::parse_message(json);
+
+    ASSERT_FALSE(result.has_value());
 }
 
 // ---------------------------------------------------------------------------

@@ -112,6 +112,11 @@ public:
         have_prev_policy_ = false;
         last_policy_tick_ = 0;
 
+        // Gravity feedforward state
+        tau_ff_received_.assign(kp_.size(), 0.0f);
+        have_tau_ff_      = false;
+        last_tau_ff_tick_ = 0;
+
         // Timing watchdog
         have_msg_           = false;
         last_msg_tick_      = 0;
@@ -175,11 +180,20 @@ public:
             q_current[i] = lowstate->msg_.motor_state()[i].q();
 
         // Step 1: check for a new command from the receiver
-        std::vector<float> q_new;
-        if (receiver_->get_latest(q_new))
+        JointCmdReceiver::Cmd cmd;
+        if (receiver_->get_latest(cmd))
         {
+            const std::vector<float>& q_new = cmd.q;
             if (q_new.size() == kp_.size())
             {
+                // Latch tau_ff on every received message — independent of the
+                // mode classification below. Gravity comp should remain active
+                // even while the safety ramp (in_interp_) is running.
+                if (cmd.tau_ff.size() == kp_.size()) {
+                    tau_ff_received_  = cmd.tau_ff;
+                    have_tau_ff_      = true;
+                    last_tau_ff_tick_ = tick_;
+                }
                 // Timing watchdog: incoming command rate should match policy_hz so the
                 // ramp slope (Δq / policy_dt) reflects one real period of motion. If
                 // the gap is outside ±50% of policy_dt, something upstream is jittering
@@ -333,11 +347,23 @@ public:
         const float ff_age = (tick_ - last_policy_tick_) * dt_;
         const bool  ff_active = have_prev_policy_ && !in_interp_ && ff_age < policy_dt_;
 
+        // Gravity feedforward: motor.tau() is summed into the FSA's internal PD law
+        // (τ = kp·(q_des-q) + kd·(dq_des-dq) + tau_ff), so this directly cancels the
+        // gravity bias the sender computed. Stays active during the safety ramp —
+        // gravity is still present while the joint moves slowly to a new target.
+        // Decays after 1.5·policy_dt of sender silence so a stalled arm_cmd doesn't
+        // leave a stale torque biased into the motor; locked joints are pinned by
+        // q_des alone and shouldn't fight an ff term.
+        const float tau_age      = (tick_ - last_tau_ff_tick_) * dt_;
+        const bool  tau_ff_active = have_tau_ff_ && tau_age < 1.5f * policy_dt_;
+
         for (int i = 0; i < static_cast<int>(q_cmd.size()); ++i) {
             lowcmd->msg_.motor_cmd()[i].q() = q_cmd[i];
             float v_ff = ff_active ? dq_ff_[i] : 0.0f;
-            if (locked_joints_.count(i)) v_ff = 0.0f;
-            lowcmd->msg_.motor_cmd()[i].dq() = v_ff;
+            float t_ff = tau_ff_active ? tau_ff_received_[i] : 0.0f;
+            if (locked_joints_.count(i)) { v_ff = 0.0f; t_ff = 0.0f; }
+            lowcmd->msg_.motor_cmd()[i].dq()  = v_ff;
+            lowcmd->msg_.motor_cmd()[i].tau() = t_ff;
         }
 
         // Publish feedback + plot at the configured decimation rate
@@ -513,6 +539,14 @@ private:
     std::vector<float> dq_ff_;             // (q_hold_ - q_ramp_start_) / policy_dt, written to motor.dq()
     bool               have_prev_policy_ = false;
     uint32_t           last_policy_tick_ = 0;  // tick_ at which the current ramp began
+
+    // Gravity feedforward — sender publishes qfrc_bias per joint; we forward it
+    // straight to motor.tau(). Updated on every received message (independent of
+    // the DIRECT/INTERP/DISCARD classification) so gravity comp stays live during
+    // the safety ramp.
+    std::vector<float> tau_ff_received_;
+    bool               have_tau_ff_      = false;
+    uint32_t           last_tau_ff_tick_ = 0;
 
     // Timing watchdog — independent of the ramp anchor; ticks on every received command.
     bool     have_msg_           = false;

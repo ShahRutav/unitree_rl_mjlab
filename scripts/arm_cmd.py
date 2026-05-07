@@ -16,9 +16,12 @@ L_thumb_rot], each in range 0.0-1.0 (0=closed, 1=open).
 Prerequisites: the inspire_g1 service must be running on the robot:
   sudo ./dfx_inspire_service/build/inspire_g1
 
-Resolves cartesian commands via warm-started differential IK, applies
-model-based gravity compensation, and forwards the corrected 29-vector
-to the C++ controller via ZMQ PUB on port 5555.
+Resolves cartesian commands via warm-started differential IK, computes
+model-based gravity torque (qfrc_bias) as a per-joint feedforward, and
+forwards both q_desired and tau_ff to the C++ controller via ZMQ PUB on
+port 5555. The C++ side adds tau_ff straight into motor.tau(), which the
+FSA actuator sums into its internal PD law (τ = kp·(q-q_des) + kd·(dq-dq_des)
++ tau_ff), cancelling gravity bias without any kp dependence.
 
 Usage
 -----
@@ -128,32 +131,30 @@ MUJOCO_JOINT_TO_IDX = {
 # ---------------------------------------------------------------------------
 
 class GravityCompensator:
-    """Computes per-joint position offset = qfrc_bias / Kp to cancel gravity error.
+    """Computes per-joint gravity torque (MuJoCo qfrc_bias at qvel=0).
 
     With qvel=0, MuJoCo's qfrc_bias is the pure gravity torque at each joint.
-    Dividing by Kp gives the position offset the PD controller needs to hold
-    the joint against gravity — commanding q_desired + offset results in
-    q_actual ≈ q_desired with near-zero steady-state error.
+    Forwarding it as motor.tau() makes the FSA actuator's internal PD law
+    cancel gravity directly: τ = kp·(q_des-q) + kd·(dq_des-dq) + qfrc_bias.
+    No kp dependence, so it works on compliant or zero-kp joints too.
 
     Joint ordering in g1_sitting.xml matches the controller order exactly:
       left_leg[0-5], right_leg[6-11], waist[12-14], left_arm[15-21], right_arm[22-28]
     """
 
-    def __init__(self, xml_path: str, kp: list):
+    def __init__(self, xml_path: str):
         import mujoco
         self._mujoco = mujoco
         self.model   = mujoco.MjModel.from_xml_path(xml_path)
         self.data    = mujoco.MjData(self.model)
         self.data.qvel[:] = 0.0   # static — pure gravity, no Coriolis/centrifugal
-        self.kp = kp
         assert self.model.nq == 29, f"Expected 29 DOF, got {self.model.nq}"
 
     def compute(self, q_current: list) -> list:
-        """Return per-joint position offsets that cancel gravity-induced steady-state error."""
+        """Return per-joint gravity torque (Nm) at the given configuration."""
         self.data.qpos[:] = q_current
         self._mujoco.mj_forward(self.model, self.data)
-        return [float(self.data.qfrc_bias[i]) / self.kp[i] if self.kp[i] != 0.0 else 0.0
-                for i in range(29)]
+        return [float(self.data.qfrc_bias[i]) for i in range(29)]
 
 
 # ---------------------------------------------------------------------------
@@ -254,13 +255,16 @@ def main():
     gc = None
     gravity_comp_enabled = cfg_yaml.get("gravity_comp", True)
     if gravity_comp_enabled:
-        kp_for_gc = list(cfg_yaml["kp"])
-        if os.path.exists(PASSIVE_JOINTS_PATH):
-            pj = yaml.safe_load(open(PASSIVE_JOINTS_PATH))
-            for idx in pj.get("passive_joints", []):
-                if 0 <= idx < len(kp_for_gc):
-                    kp_for_gc[idx] = 0.0
-        gc = GravityCompensator(XML_PATH, kp_for_gc)
+        gc = GravityCompensator(XML_PATH)
+
+    # ── Per-joint torque clamp (Nm) ───────────────────────────────────────────
+    # Bound the gravity feedforward we publish so a bad MuJoCo state can't drive
+    # the FSA past its ctrlrange. The C++ side already uses this for adaptive
+    # interp duration; we reuse it here as a symmetric ±max clamp on tau_ff.
+    max_torque = cfg_yaml.get("max_torque", None)
+    if max_torque is not None:
+        max_torque = list(map(float, max_torque))
+        assert len(max_torque) == 29, f"max_torque has {len(max_torque)} entries, expected 29"
 
     # ── IK solver ────────────────────────────────────────────────────────────
     ik_solver = None
@@ -338,7 +342,7 @@ def main():
     q_desired = q_default[:]
     for idx, val in frozen_q.items():
         q_desired[idx] = val
-    gravity_offset = [0.0] * 29
+    gravity_torque = [0.0] * 29
     q_current = None
     warm_start = None
     hand_desired = [1.0] * 12  # fully open; [R0..R5, L0..L5], range 0.0-1.0
@@ -445,30 +449,42 @@ def main():
                 except (KeyError, json.JSONDecodeError, ValueError) as e:
                     print(f"[arm_cmd] WARN: malformed command — {e}")
 
-            # 4. Gravity compensation (upper body only — waist + arms, indices 12+)
+            # 4. Gravity feedforward (qfrc_bias at q_current, qvel=0)
             if gc is not None and q_current is not None:
-                gravity_offset = gc.compute(q_current)
+                gravity_torque = gc.compute(q_current)
 
-            # 5. Build outgoing command.
-            # Frozen joints (legs + any frozen upper-body joints from IK config) are
-            # pinned to their frozen_q values — no gravity comp, no command override.
-            # All other upper-body joints get gravity compensation applied.
+            # 5. Build outgoing q_sent.  Pure user intent — no kp-dependent offset.
+            # Frozen joints (legs + any frozen upper-body joints from IK config)
+            # pin to their frozen_q values; locked joints override everything.
             q_sent = [
-                frozen_q[i] if i in frozen_q else q_desired[i] + gravity_offset[i]
+                frozen_q[i] if i in frozen_q else q_desired[i]
                 for i in range(29)
             ]
-
-            # Locked joints override everything — no interpolation, no drift, no compromise.
             for idx, val in locked_joints.items():
                 if 0 <= idx < 29:
                     q_sent[idx] = val
+
+            # 5a. Build tau_ff. Mask out joints we don't want to gravity-comp:
+            #   - frozen (legs sitting on platform — gravity partly supported externally)
+            #   - locked (rigid pin via q_des; tau_ff would just fight the entry ramp)
+            #   - passive (semantically "limp"; user wants no torque produced)
+            # Then clamp symmetrically to max_torque so a stale q_current can't
+            # drive the FSA past ctrlrange.
+            tau_ff_sent = [0.0] * 29
+            for i in range(29):
+                if i in frozen_q or i in locked_joints or i in passive_indices:
+                    continue
+                t = gravity_torque[i]
+                if max_torque is not None:
+                    t = max(-max_torque[i], min(max_torque[i], t))
+                tau_ff_sent[i] = t
 
             # 5b. Send hand commands
             if hand_ctrl is not None:
                 hand_ctrl.set_angles(hand_desired)
 
             # 6. Forward to controller
-            out_sock.send_string(json.dumps({"q": q_sent}))
+            out_sock.send_string(json.dumps({"q": q_sent, "tau_ff": tau_ff_sent}))
 
             # 7. Rate-limit sleep
             next_t += period

@@ -11,6 +11,11 @@
 
 class JointCmdReceiver {
 public:
+    struct Cmd {
+        std::vector<float> q;
+        std::vector<float> tau_ff;  // empty if absent in the JSON message
+    };
+
     explicit JointCmdReceiver(const std::string& address,
                               int rcvtimeo_ms  = 100,
                               int poll_sleep_ms = 1)
@@ -38,21 +43,24 @@ public:
     JointCmdReceiver(JointCmdReceiver&&) = delete;
     JointCmdReceiver& operator=(JointCmdReceiver&&) = delete;
 
-    /// Thread-safe. Returns true and copies latest_q_ to out if a new message
-    /// has arrived since the last call. Returns false otherwise.
-    bool get_latest(std::vector<float>& out) {
+    /// Thread-safe. Returns true and copies the latest message into out if a
+    /// new one has arrived since the last call. Returns false otherwise.
+    /// out.tau_ff is empty if the sender did not include the field.
+    bool get_latest(Cmd& out) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!has_new_) {
             return false;
         }
-        out = latest_q_;
+        out = latest_;
         has_new_ = false;
         return true;
     }
 
-    /// Parses JSON {"q": [f0, ..., fN]}. Returns the float vector if valid,
-    /// std::nullopt if malformed (wrong key, not array, not floats, size < 1).
-    static std::optional<std::vector<float>> parse_message(const std::string& msg) {
+    /// Parses JSON {"q": [f0, ..., fN], "tau_ff": [f0, ..., fN]}. tau_ff is
+    /// optional; if present it must be the same length as q. Returns nullopt
+    /// for malformed messages (missing/non-array q, length mismatch on tau_ff,
+    /// non-numeric elements).
+    static std::optional<Cmd> parse_message(const std::string& msg) {
         nlohmann::json j;
         try {
             j = nlohmann::json::parse(msg);
@@ -60,34 +68,30 @@ public:
             return std::nullopt;
         }
 
-        // Must have key "q"
-        if (!j.contains("q")) {
-            return std::nullopt;
-        }
-
+        if (!j.contains("q")) return std::nullopt;
         const auto& q_val = j["q"];
+        if (!q_val.is_array() || q_val.empty()) return std::nullopt;
 
-        // Must be an array
-        if (!q_val.is_array()) {
-            return std::nullopt;
-        }
-
-        // Must have at least one element
-        if (q_val.empty()) {
-            return std::nullopt;
-        }
-
-        // All elements must be numeric (float-compatible)
-        std::vector<float> result;
-        result.reserve(q_val.size());
+        Cmd cmd;
+        cmd.q.reserve(q_val.size());
         for (const auto& elem : q_val) {
-            if (!elem.is_number()) {
+            if (!elem.is_number()) return std::nullopt;
+            cmd.q.push_back(elem.get<float>());
+        }
+
+        if (j.contains("tau_ff")) {
+            const auto& t_val = j["tau_ff"];
+            if (!t_val.is_array() || t_val.size() != cmd.q.size()) {
                 return std::nullopt;
             }
-            result.push_back(elem.get<float>());
+            cmd.tau_ff.reserve(t_val.size());
+            for (const auto& elem : t_val) {
+                if (!elem.is_number()) return std::nullopt;
+                cmd.tau_ff.push_back(elem.get<float>());
+            }
         }
 
-        return result;
+        return cmd;
     }
 
 private:
@@ -108,7 +112,7 @@ private:
                 auto parsed = parse_message(data);
                 if (parsed.has_value()) {
                     std::lock_guard<std::mutex> lock(mutex_);
-                    latest_q_ = std::move(*parsed);
+                    latest_ = std::move(*parsed);
                     has_new_ = true;
                 }
             }
@@ -124,6 +128,6 @@ private:
     int poll_sleep_ms_;
 
     std::mutex mutex_;
-    std::vector<float> latest_q_;
-    bool has_new_{false};
+    Cmd        latest_;
+    bool       has_new_{false};
 };
